@@ -1,0 +1,13 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1788269334617,
+      "tag": "0000_spicy_dreadnoughts",
+      "breakpoints": true
+    }
+  ]
+}

@@ -1,0 +1,38 @@
+services:
+  bot:
+    build: .
+    image: discord-ai-bot:latest
+    container_name: discord-ai-bot
+
+    # Oracle VM 重開機後 Docker 會自動把它拉起來
+    restart: unless-stopped
+
+    env_file:
+      - .env
+
+    environment:
+      # 容器內的固定路徑，對應下面的 volume
+      DATABASE_PATH: /app/data/bot.db
+      TZ: ${TZ:-Asia/Taipei}
+
+    volumes:
+      # SQLite 持久化：容器砍掉重建、VM 重開都不會掉資料
+      - ./data:/app/data
+
+    # 留時間讓 Bot 關 Discord 連線並 checkpoint SQLite 的 WAL
+    stop_grace_period: 20s
+
+    # 不對外開任何 port：健康檢查端點只綁容器內的 127.0.0.1，
+    # 所以 Oracle 防火牆不需要為這個 Bot 開洞。
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    # 12GB RAM 的 VM 上留個上限，避免異常時把整台機器吃垮
+    deploy:
+      resources:
+        limits:
+          memory: 1g

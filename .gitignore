@@ -1,0 +1,22 @@
+node_modules/
+dist/
+*.log
+
+# 機密：絕對不可 commit
+.env
+.env.*
+!.env.example
+
+# SQLite 資料庫（由 Docker volume 持久化）
+# 保留空目錄本身，資料檔不進版控
+data/*
+!data/.gitkeep
+*.db
+*.db-shm
+*.db-wal
+
+# 編輯器 / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
