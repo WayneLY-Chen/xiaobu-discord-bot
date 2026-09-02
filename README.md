@@ -38,6 +38,18 @@
 
 ---
 
+## 截圖
+
+<p align="center">
+  <img src="docs/screenshots/profile.png" alt="小步在 Discord 中的個人資料卡" width="560">
+</p>
+
+<p align="center">
+  <sub>實際運行畫面。頭像與橫幅版權保留，見<a href="#圖片素材">圖片素材</a>。</sub>
+</p>
+
+---
+
 ## 功能狀態
 
 ### 可以使用
