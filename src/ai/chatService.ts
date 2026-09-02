@@ -112,7 +112,10 @@ export class ChatService {
       // 這裡再設一個獨立的數字只會讓兩者悄悄長歪：使用者存了 50 則，
       // 卻只有最新的幾則真的在小步眼前，剩下的變成看得到用不到的死資料。
       memories: settings.memoryEnabled
-        ? listMemories(this.db, context.guildId, context.userId).map((row) => row.content)
+        ? listMemories(this.db, context.guildId, context.userId).map((row) => ({
+            id: row.id,
+            content: row.content,
+          }))
         : [],
       toolsAvailable: tools.length > 0,
     });

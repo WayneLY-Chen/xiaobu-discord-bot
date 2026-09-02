@@ -38,8 +38,11 @@ export interface PromptContext {
   guildSystemPrompt?: string | null;
   /** 使用者自己設定的個性。 */
   userPersonality?: string | null;
-  /** 這位使用者在這個伺服器的長期記憶（範圍 guild_id + user_id）。 */
-  memories?: string[];
+  /**
+   * 這位使用者在這個伺服器的長期記憶（範圍 guild_id + user_id）。
+   * 帶著編號一起注入，模型要刪的時候就不必再呼叫一次工具去問編號。
+   */
+  memories?: { id: number; content: string }[];
   /** 整個伺服器共用的背景知識（範圍 guild_id）。 */
   guildFacts?: string[];
   /** 這一輪有沒有提供工具給模型。 */
@@ -94,7 +97,8 @@ export function buildSystemInstruction(context: PromptContext): string {
     sections.push(
       '',
       `你對「${context.speaker}」記得的事（只適用於這個人，不要套用到其他人身上）：`,
-      ...memories.map((memory) => `- ${memory}`),
+      ...memories.map((memory) => `- #${memory.id} ${memory.content}`),
+      '前面的 #編號就是 forget 工具要的編號，要刪的時候直接用，不必再去查一次。',
     );
   }
 

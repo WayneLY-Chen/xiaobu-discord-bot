@@ -83,7 +83,6 @@ describe('提供給模型的工具清單', () => {
     const names = toolsFor(contextWith({ memoryEnabled: false })).map((tool) => tool.name);
 
     expect(names).not.toContain('remember');
-    expect(names).not.toContain('recall_memories');
     expect(names).not.toContain('forget');
     expect(names).toContain('calculate');
   });
@@ -92,7 +91,13 @@ describe('提供給模型的工具清單', () => {
     const names = toolsFor(contextWith({ memoryEnabled: true })).map((tool) => tool.name);
 
     expect(names).toContain('remember');
-    expect(names).toContain('recall_memories');
+    expect(names).toContain('forget');
+  });
+
+  it('不提供 recall_memories —— 記憶已經全部注入 prompt，再查一次是白花一次請求', () => {
+    const names = toolsFor(contextWith({ memoryEnabled: true })).map((tool) => tool.name);
+
+    expect(names).not.toContain('recall_memories');
   });
 
   it('沒有搜尋來源時不提供搜尋工具，免得模型呼叫了才發現用不了', () => {

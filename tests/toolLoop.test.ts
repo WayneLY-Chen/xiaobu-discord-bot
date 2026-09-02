@@ -258,6 +258,16 @@ describe('記憶與伺服器背景知識', () => {
     expect(instruction).toContain(`第 ${MAX_MEMORIES_PER_USER - 1} 則記憶`);
   });
 
+  it('記憶帶著 #編號注入，模型要刪就不必再花一次請求去查編號', async () => {
+    addMemory(db, 'serverA', 'wayne', '喜歡 Qwen');
+    const id = listMemories(db, 'serverA', 'wayne')[0]?.id ?? 0;
+
+    const { provider, service } = serviceWith([{ text: '好' }]);
+    await ask(service, '嗨');
+
+    expect(provider.requests[0]?.systemInstruction).toContain(`#${id} 喜歡 Qwen`);
+  });
+
   it('別人的記憶不會出現在自己的 system instruction', async () => {
     addMemory(db, 'serverA', 'wayne', 'Wayne 的祕密');
     const { provider, service } = serviceWith([{ text: '不知道' }]);

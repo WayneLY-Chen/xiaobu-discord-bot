@@ -1,7 +1,7 @@
 import { logger } from '../../utils/logger.js';
 import type { ToolCall, ToolDefinition } from '../providers/types.js';
 import { calculatorTool } from './calculator.js';
-import { forgetTool, recallTool, rememberTool } from './memory.js';
+import { forgetTool, rememberTool } from './memory.js';
 import { searchTool } from './search.js';
 import { timeTool } from './time.js';
 import { weatherTool } from './weather.js';
@@ -13,7 +13,6 @@ const ALL_TOOLS: Tool[] = [
   calculatorTool,
   timeTool,
   rememberTool,
-  recallTool,
   forgetTool,
 ];
 

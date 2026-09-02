@@ -151,7 +151,7 @@ src/
 │   │   ├── weather.ts           get_weather（Open-Meteo）
 │   │   ├── calculator.ts        calculate（自寫求值器，不用 eval）
 │   │   ├── time.ts              get_current_time
-│   │   ├── memory.ts            remember / recall_memories / forget
+│   │   ├── memory.ts            remember / forget
 │   │   └── registry.ts          工具清單與執行
 │   ├── context.ts               說話者標記與對話歷史組裝
 │   ├── prompt.ts                system instruction（含記憶與背景知識注入）
@@ -353,7 +353,7 @@ Gemini 的官方文件現在只寫「到 AI Studio 查看你自己的 rate limit
 | `get_weather` | 問某個城市的天氣 | Open-Meteo |
 | `calculate` | 需要精確數值的計算 | 本機（自己寫的求值器） |
 | `get_current_time` | 現在幾點、今天幾號、還有幾天 | 本機 |
-| `remember` / `recall_memories` / `forget` | 使用者說「記住…」「忘掉…」 | 本機 SQLite |
+| `remember` / `forget` | 使用者說「記住…」「忘掉…」 | 本機 SQLite |
 
 工具都有 JSON schema 與參數驗證（規格 §29）。模型給錯參數時會收到說明並自己重試，而不是讓整輪對話失敗。最多連續呼叫 **3 輪**工具，第 4 輪不再提供工具，逼模型用手上的資料把話講完。
 
@@ -399,6 +399,8 @@ Open-Meteo，免費且不需要 API Key，每天 10,000 次、每分鐘 600 次�
 不會把所有聊天訊息都存成記憶（§16 明令禁止）—— 只有使用者明確要求、或講到明顯值得長期記得的事，模型才會呼叫 `remember`。已存的記憶會**全部**注入 system instruction，所以換個頻道問也記得。
 
 刻意不另外設「注入上限」：唯一的天花板是儲存上限，存的時候就擋住了。多設一個獨立的數字只會讓兩者悄悄長歪 —— 使用者存滿 50 則，實際只有最新幾則在小步眼前，剩下的變成看得到卻用不到的死資料。
+
+注入時會帶上 `#編號`，`forget` 直接用那個編號刪。**刻意不做 `recall_memories` 這種「查記憶」工具** —— 記憶已經全部在 prompt 裡了，再查一次撈到的是一模一樣的資料，只是白白多打一次 API。免費層真正會先用完的是**每日請求次數**（flash-lite 500 次／天），不是 token，所以省請求比省 token 重要得多。
 
 `/me memory` 或 `/settings memory` 關閉後，記憶工具**不會提供給模型**，注入也會停止 —— 關掉就是真的關掉，不是靠 prompt 拜託模型別用。但 `/memory list`、`delete`、`clear` 仍然可用：使用者必須永遠看得到也刪得掉自己的資料。
 

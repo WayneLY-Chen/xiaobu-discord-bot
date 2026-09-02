@@ -1,7 +1,6 @@
 import {
   addMemory,
   deleteMemory,
-  listMemories,
   MAX_MEMORIES_PER_USER,
   MAX_MEMORY_LENGTH,
 } from '../../database/repositories/memories.js';
@@ -65,29 +64,6 @@ export const rememberTool: Tool = {
 };
 
 /** 讓模型主動查自己記得什麼。平常記憶會自動注入，但被追問細節時可以再查一次。 */
-export const recallTool: Tool = {
-  requiresMemory: true,
-
-  definition: {
-    name: 'recall_memories',
-    description:
-      '列出你對目前這位使用者記住的所有事情。被問到「你記得我什麼」或需要確認細節時使用。',
-    parameters: { type: 'object', properties: {}, required: [] },
-  },
-
-  async execute(_args, context): Promise<ToolResult> {
-    const rows = listMemories(context.db, context.guildId, context.userId);
-
-    if (rows.length === 0) {
-      return { text: '目前對這位使用者沒有任何長期記憶。' };
-    }
-
-    return {
-      text: ['目前記得這些事：', ...rows.map((row) => `#${row.id} ${row.content}`)].join('\n'),
-    };
-  },
-};
-
 /** 讓使用者用講的就能刪掉記錯的事，不必去翻 /memory delete 的 id。 */
 export const forgetTool: Tool = {
   requiresMemory: true,
@@ -96,13 +72,13 @@ export const forgetTool: Tool = {
     name: 'forget',
     description:
       '刪掉一則長期記憶。使用者說「忘掉…」「那個記錯了」時使用。' +
-      '如果不確定是哪一則，先用 recall_memories 看清楚再刪。',
+      '編號直接看 system instruction 裡記憶清單前面的 #編號，不需要先查。',
     parameters: {
       type: 'object',
       properties: {
         id: {
           type: 'number',
-          description: '要刪除的記憶編號，來自 recall_memories 列出的 #編號。',
+          description: '要刪除的記憶編號，就是記憶清單裡每一則前面的 #編號。',
         },
       },
       required: ['id'],
