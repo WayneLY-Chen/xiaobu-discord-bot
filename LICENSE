@@ -1,0 +1,43 @@
+MIT License
+
+Copyright (c) 2026 Wayne Chen
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---
+
+NOTE ON IMAGE ASSETS / 圖片素材例外條款
+
+The MIT License above applies to the SOURCE CODE and DOCUMENTATION only.
+
+It does NOT apply to the visual identity of the bot known as 小步 (Xiaobu) —
+its avatar and banner artwork. Those files are intentionally excluded from
+this repository. Any appearance of that artwork in the screenshots under
+docs/screenshots/ is for the sole purpose of documenting this project, and
+all rights to it are reserved by the copyright holder.
+
+You may not extract, reproduce, or reuse the avatar or banner artwork,
+including from the screenshots, for your own bot or any other purpose.
+If you self-host this project, please supply your own artwork.
+
+以上 MIT License 僅適用於本專案的「原始碼」與「文件」。
+
+小步的大頭貼與橫幅圖片不適用，且已刻意排除在本 repo 之外。
+docs/screenshots/ 內的截圖出現這些圖片，僅為說明本專案的實際運作，版權保留。
+請勿從截圖中擷取、重製或將其用於你自己的 Bot。自架請自行準備圖片素材。

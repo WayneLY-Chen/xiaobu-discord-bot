@@ -1,13 +1,23 @@
-# Discord AI Bot
+# 小步（Xiaobu）— Discord AI Bot
 
-可公開邀請到多個 Discord Server 的 AI Bot。部署在 Oracle Cloud Always Free VM，24/7 運行，不需要 GPU，伺服器成本 $0。
+![Node](https://img.shields.io/badge/node-%E2%89%A522-339933?logo=node.js&logoColor=white)
+![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)
+![discord.js](https://img.shields.io/badge/discord.js-14-5865F2?logo=discord&logoColor=white)
+![Gemini](https://img.shields.io/badge/Gemini%20API-free%20tier-4285F4?logo=googlegemini&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-compose-2496ED?logo=docker&logoColor=white)
+![License](https://img.shields.io/badge/license-MIT-green)
 
-> **目前進度：Phase 1 已完成。** 聊天、多伺服器隔離、個人設定、SQLite 持久化、Docker 部署都可實際使用。搜尋、生圖、長期記憶、音樂、語音尚未實作 —— 詳見下方「功能狀態」。
+可公開邀請到多個 Discord Server 的 AI 聊天 Bot。部署在 Oracle Cloud Always Free VM，24/7 運行，不需要 GPU，**伺服器成本 $0**。
+
+小步是一個 18 歲女生設定的聊天夥伴。在多人頻道中她分得出誰是誰，不會把大家的話混在一起 —— 這是本專案在架構上最花心思的地方，詳見[說話者識別怎麼運作](#說話者識別怎麼運作)。
+
+> **目前進度：Phase 1 已完成並上線運行。** 聊天、多伺服器隔離、個人設定、SQLite 持久化、Docker 部署都可實際使用。搜尋、生圖、長期記憶、音樂、語音尚未實作 —— 詳見下方「功能狀態」。
 
 ---
 
 ## 目錄
 
+- [截圖](#截圖)
 - [功能狀態](#功能狀態)
 - [架構](#架構)
 - [系統需求](#系統需求)
@@ -23,6 +33,7 @@
 - [備份](#備份)
 - [疑難排解](#疑難排解)
 - [安全性](#安全性)
+- [圖片素材](#圖片素材)
 - [License 與第三方](#license-與第三方)
 
 ---
@@ -320,8 +331,8 @@ sudo systemctl enable docker
 ### 5. 部署
 
 ```bash
-git clone <你的 repo 網址> discord-ai-bot
-cd discord-ai-bot
+git clone https://github.com/WayneLY-Chen/xiaobu-discord-bot.git
+cd xiaobu-discord-bot
 
 cp .env.example .env
 nano .env          # 填入 DISCORD_TOKEN、DISCORD_CLIENT_ID、GEMINI_API_KEY
@@ -345,10 +356,12 @@ docker compose logs -f
 ### 6. 更新
 
 ```bash
-cd ~/discord-ai-bot
+cd ~/xiaobu-discord-bot
 git pull
 docker compose up -d --build
 ```
+
+`.env` 與 `data/` 都在 `.gitignore` 中，`git pull` 不會覆蓋你的設定或資料庫。
 
 ### 7. 驗證 VM 重開機後會自動恢復
 
@@ -498,13 +511,30 @@ docker compose logs -f --tail=100
 
 ---
 
+## 圖片素材
+
+小步的**大頭貼與橫幅不包含在這個 repo 中**（`assets/` 已列入 `.gitignore`），也不適用 MIT License。
+
+README 截圖中會看到這些圖片，那是為了說明專案的實際運作，**版權保留**。請不要從截圖擷取、重製，或用在你自己的 Bot 上。
+
+自架的話請自行準備兩張圖，在 Discord Developer Portal 上傳：
+
+| 用途 | 尺寸 | 上傳位置 |
+|---|---|---|
+| 大頭貼 | 1024×1024（正方形） | Developer Portal → General Information → App Icon |
+| 橫幅 | 680×240 | Developer Portal → General Information → App Banner |
+
+> **Discord 不接受中文的 Bot 使用者名稱**（PATCH 會回 200 但實際不生效）。本專案的做法是在每個伺服器設定 Bot 暱稱來顯示正確名字，程式在 [src/bot/nickname.ts](src/bot/nickname.ts)，加入伺服器時自動套用。
+
+---
+
 ## License 與第三方
 
 ### 本專案程式碼
 
-全部為原創，未複製任何第三方 Discord Bot 專案的程式碼，因此沒有需要標註的 attribution。
+[MIT License](LICENSE)。全部為原創，未複製任何第三方 Discord Bot 專案的程式碼，因此沒有需要標註的 attribution。
 
-尚未指定 License。公開發佈前請自行決定並新增 `LICENSE` 檔案。
+**注意：** MIT 只涵蓋原始碼與文件，**不涵蓋**上面說的圖片素材，詳見 `LICENSE` 末尾的例外條款。
 
 ### 相依套件
 

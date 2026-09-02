@@ -20,3 +20,8 @@ data/*
 Thumbs.db
 .idea/
 .vscode/
+
+# 小步的大頭貼與橫幅原圖。
+# 這是這個 Bot 專屬的形象素材，版權保留，不隨公開 repo 散布。
+# 自架的人請自行準備圖片（詳見 README「圖片素材」）。
+assets/
