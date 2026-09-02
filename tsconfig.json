@@ -9,6 +9,13 @@
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true,
+    // 這個專案沒有 linter，靜態檢查只有 tsc —— 死掉的 import 與變數
+    // 要靠這兩個選項擋，否則會一路混進 Docker build。
+    // 刻意留著的未使用參數用底線開頭（例如 _args），tsc 會放行。
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    // switch 漏寫 break 會直接掉進下一個 case，這種錯不該只靠 code review 抓。
+    "noFallthroughCasesInSwitch": true,
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
