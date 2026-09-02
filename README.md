@@ -332,7 +332,15 @@ docker compose logs -f
 
 看到 `已登入為 XXX#0000` 就成功了。
 
-> 容器內以 `node` 使用者（uid 1000）執行。Ubuntu 的 `ubuntu` 使用者也是 uid 1000，所以 `./data` 目錄的權限預設就正確。若遇到 `SQLITE_CANTOPEN`，執行 `sudo chown -R 1000:1000 ./data`。
+> 容器不以 root 執行。**部署前務必設定 `.env` 的 `APP_UID` / `APP_GID`**：
+>
+> ```bash
+> echo "APP_UID=$(id -u)" >> .env
+> echo "APP_GID=$(id -g)" >> .env
+> ```
+>
+> 不同發行版的第一個一般使用者 uid 不一定是 1000（Oracle 的 Ubuntu 24.04 映像檔是 1001），
+> 沒設定的話容器會因為無法寫入掛載進來的 `./data` 而不斷重啟。
 
 ### 6. 更新
 
@@ -462,7 +470,7 @@ crontab -e
 | `環境變數設定錯誤` | 訊息會列出缺哪一項，對照 `.env.example` 補上 |
 | 「目前 AI 免費額度已用完」 | Gemini 額度用盡。到 <https://aistudio.google.com/rate-limit> 查看實際額度，或調低 `RATE_LIMIT_*` |
 | 「AI 服務認證失敗」 | `GEMINI_API_KEY` 錯誤或已失效，重新產生 |
-| `SQLITE_CANTOPEN` | `sudo chown -R 1000:1000 ./data` |
+| `unable to open database file` / `SQLITE_CANTOPEN` | 容器 uid 與 `./data` 擁有者不符。執行 `id -u` 與 `id -g`，把結果填進 `.env` 的 `APP_UID` / `APP_GID`，再 `docker compose up -d` |
 | 容器一直 restart | `docker compose logs --tail=50` 看實際錯誤，多半是環境變數沒填 |
 | healthcheck 顯示 unhealthy | Bot 沒連上 Discord。檢查 Token 是否正確、VM 是否有 outbound 網路 |
 | Ampere A1 建立失敗 | Oracle 該區容量不足，換可用區或改用 E2.1.Micro |

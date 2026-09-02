@@ -10,6 +10,13 @@ services:
     env_file:
       - .env
 
+    # 以主機上擁有 ./data 的使用者身分執行。
+    # 不同 Linux 發行版的第一個一般使用者 uid 不一定是 1000
+    #（例如 Oracle 的 Ubuntu 24.04 映像檔是 1001），
+    # 寫死 uid 會導致容器無法寫入掛載進來的 data 目錄。
+    # 部署時在 .env 設定 APP_UID / APP_GID，用 `id -u` / `id -g` 取得。
+    user: "${APP_UID:-1000}:${APP_GID:-1000}"
+
     environment:
       # 容器內的固定路徑，對應下面的 volume
       DATABASE_PATH: /app/data/bot.db
