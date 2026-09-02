@@ -3,7 +3,8 @@
 ![Node](https://img.shields.io/badge/node-%E2%89%A522-339933?logo=node.js&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)
 ![discord.js](https://img.shields.io/badge/discord.js-14-5865F2?logo=discord&logoColor=white)
-![Gemini](https://img.shields.io/badge/Gemini%20API-free%20tier-4285F4?logo=googlegemini&logoColor=white)
+![Gemini](https://img.shields.io/badge/Gemini-free%20tier-4285F4?logo=googlegemini&logoColor=white)
+![Groq](https://img.shields.io/badge/Groq-free%20tier-F55036?logo=groq&logoColor=white)
 ![Docker](https://img.shields.io/badge/Docker-compose-2496ED?logo=docker&logoColor=white)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
@@ -11,7 +12,7 @@
 
 小步是一個 18 歲女生設定的聊天夥伴。在多人頻道中她分得出誰是誰，不會把大家的話混在一起 —— 這是本專案在架構上最花心思的地方，詳見[說話者識別怎麼運作](#說話者識別怎麼運作)。
 
-> **目前進度：Phase 1 已完成並上線運行。** 聊天、多伺服器隔離、個人設定、SQLite 持久化、Docker 部署都可實際使用。搜尋、生圖、長期記憶、音樂、語音尚未實作 —— 詳見下方「功能狀態」。
+> **目前進度：Phase 2 已完成。** 聊天、多伺服器隔離、個人設定、SQLite 持久化、Docker 部署、多 AI Provider 與自動換手都可實際使用。搜尋、生圖、長期記憶、音樂、語音尚未實作 —— 詳見下方「功能狀態」。
 
 ---
 
@@ -22,7 +23,7 @@
 - [架構](#架構)
 - [系統需求](#系統需求)
 - [Discord Bot 設定](#discord-bot-設定)
-- [Gemini API 設定與免費額度](#gemini-api-設定與免費額度)
+- [AI Provider 與免費額度](#ai-provider-與免費額度)
 - [環境變數](#環境變數)
 - [本機開發](#本機開發)
 - [Docker](#docker)
@@ -58,6 +59,8 @@
 |---|---|
 | AI 聊天 | 在指定的 AI 頻道直接說話，或在任何頻道 @Bot |
 | 說話者識別 | 多人頻道中，Bot 知道每一則是誰說的 |
+| 多 AI Provider | Gemini 與 Groq，13 個免費模型可選 |
+| 自動換手 | 主力 provider 額度用完時改用另一家免費服務，**絕不自動切付費** |
 | 短期對話記憶 | 每個頻道一條上下文，重啟後仍保留 |
 | 多伺服器隔離 | 每個 Server 獨立設定，資料互不流通 |
 | 個人設定 | 偏好模型、語言、回覆風格 |
@@ -72,7 +75,6 @@
 
 | 功能 | 排定階段 |
 |---|---|
-| 多 AI Provider（Qwen、NVIDIA）與 fallback | Phase 2 |
 | Web Search、計算機、天氣、Tool Calling | Phase 3 |
 | 長期記憶 `/memory` | Phase 3 |
 | AI 生圖 | Phase 4 |
@@ -91,29 +93,39 @@ Discord Gateway
       v
 events/messageCreate ──► rate limiter ──► ChatService
                                               |
-                    ┌─────────────────────────┼─────────────────────────┐
-                    v                         v                         v
-            conversations 儲存         prompt 組裝（說話者標記）     GeminiClient
-                    |                         |                         |
-                    └────────► SQLite ◄───────┘                    Gemini API
-                                  ^
-                                  |
-                          usage / settings
+                    ┌─────────────────────────┼──────────────────────┐
+                    v                         v                      v
+            conversations 儲存         prompt 組裝（說話者標記）   AiRouter
+                    |                         |                      |
+                    └────────► SQLite ◄───────┘          ┌───────────┴───────────┐
+                                  ^                      v                       v
+                                  |                 GeminiClient        OpenAiCompatible
+                          usage / settings               |                       |
+                                                    Gemini API              Groq API
+
+AiRouter：依選到的 model 決定 provider，失敗時在**免費** provider 之間換手，
+         且永遠不會自動使用標記為 paid 的 provider。
 ```
 
 ```
 src/
 ├── index.ts                     啟動、關閉、相依組裝
 ├── config/
-│   ├── env.ts                   Zod 驗證環境變數
-│   ├── constants.ts             model 白名單等常數
+│   ├── env.ts                   Zod 驗證環境變數（至少一把 provider Key）
+│   ├── constants.ts             MODEL_CATALOG：model -> provider 對照與白名單
 │   └── resolveSettings.ts       個人 > 伺服器 > 系統預設
 ├── database/
 │   ├── schema.ts                Drizzle schema（9 張表）
 │   ├── client.ts                連線、migration、pragma
 │   └── repositories/            identity / settings / conversations / usage
 ├── ai/
-│   ├── gemini.ts                Gemini API 封裝與錯誤轉譯
+│   ├── providers/
+│   │   ├── types.ts             ChatProvider 介面與能力宣告
+│   │   ├── gemini.ts            Gemini SDK 封裝與錯誤轉譯
+│   │   ├── openaiCompatible.ts  OpenAI 相容端點共用實作（fetch，無額外相依）
+│   │   ├── groq.ts              Groq 的設定
+│   │   └── registry.ts          依環境變數組出可用 provider（陣列順序＝優先順序）
+│   ├── router.ts                選 provider、換手、付費防護
 │   ├── context.ts               說話者標記與對話歷史組裝
 │   ├── prompt.ts                system instruction
 │   └── chatService.ts           一則訊息 -> 一則回覆的完整流程
@@ -122,6 +134,10 @@ src/
 ├── events/                      messageCreate / interactionCreate / guildLifecycle
 └── utils/                       rateLimiter / messageChunk / errors / logger
 ```
+
+### 新增一個 provider 要做什麼
+
+如果是 OpenAI 相容端點（多數都是），只要在 `src/ai/providers/` 加一個像 `groq.ts` 那樣的小檔案設定 baseUrl，在 `constants.ts` 的 `PROVIDER_IDS`、`MODEL_CATALOG`、`PROVIDER_DEFAULT_MODEL` 補上，再到 `registry.ts` 加一行。Router 與 ChatService 都不用改。
 
 ### 說話者識別怎麼運作
 
@@ -141,7 +157,7 @@ AI 頻道是多人共用的。如果只把頻道歷史丟給模型，模型會�
 - Node.js 22 以上（本機開發）
 - Docker 與 Docker Compose（部署）
 - Discord Bot Token
-- Gemini API Key
+- Gemini 或 Groq 的 API Key（至少一把，兩把都有就有自動換手）
 
 不需要 GPU，不需要付費 API，不需要額外資料庫。
 
@@ -196,49 +212,111 @@ https://discord.com/oauth2/authorize?client_id=你的APPLICATION_ID&permissions=
 
 ---
 
-## Gemini API 設定與免費額度
+## AI Provider 與免費額度
 
-到 [Google AI Studio](https://aistudio.google.com/apikey) 建立 API Key → 這是 `GEMINI_API_KEY`。
+本專案接了 **Gemini** 與 **Groq** 兩家，兩家都是**真正的免費層**，而且條款都允許把服務提供給你的使用者。至少要設定一把 Key，兩把都設就有自動換手。
 
-### 免費額度現況（2026-09 查證）
+| Provider | 取得 Key | 環境變數 | 角色 |
+|---|---|---|---|
+| Google Gemini | <https://aistudio.google.com/apikey> | `GEMINI_API_KEY` | 預設主力 |
+| Groq | <https://console.groq.com/keys> | `GROQ_API_KEY` | 備援，也可直接指定 |
 
-| 項目 | 狀況 |
+### 可用模型（2026-09 查證）
+
+| Model | Provider | 狀態 |
+|---|---|---|
+| `gemini-3.1-flash-lite`（預設） | Gemini | production |
+| `gemini-3.5-flash-lite`、`gemini-2.5-flash-lite` | Gemini | production |
+| `gemini-3.5-flash`、`gemini-3.6-flash`、`gemini-3.7-flash`、`gemini-2.5-flash` | Gemini | production |
+| `llama-3.3-70b-versatile` | Groq | production（Groq 換手時的預設） |
+| `llama-3.1-8b-instant` | Groq | production，最快 |
+| `openai/gpt-oss-120b`、`openai/gpt-oss-20b` | Groq | production |
+| `qwen/qwen3.6-27b`、`qwen/qwen3.8-27b` | Groq | ⚠️ preview |
+
+⚠️ Groq 官方把 Qwen 標為 **preview**，寫明「intended for evaluation purposes only」、可能隨時下架。所以它們**不會**被當成預設或換手目標，只有你自己選才會用到。`/settings model` 的選單上也標了出來。
+
+`gemini-2.5-pro` **未出現**在 Gemini 免費清單中，因此不納入白名單 —— 依規格「不確定就不假設免費」。
+
+### 額度
+
+| Provider | 額度 |
 |---|---|
-| Free Tier | **仍然存在** |
-| 免費模型 | `gemini-3.1-flash-lite`、`gemini-3.5-flash-lite`、`gemini-2.5-flash-lite`、`gemini-3.5-flash`、`gemini-3.6-flash`、`gemini-3.7-flash`、`gemini-2.5-flash` 在 Free Tier 標示 Free of charge |
-| 信用卡 | 免費層取得 API Key 不需要綁定信用卡 |
-| 具體額度數字 | ⚠️ **Google 已不在公開文件列出固定的 RPM / TPM / RPD 數值** |
+| Gemini | ⚠️ **Google 已不在公開文件列出固定的 RPM / TPM / RPD 數值** |
+| Groq | 每個模型 30 RPM / 1,000 RPD / 8K TPM / 200K TPD |
 
-**重要：** 官方文件現在只寫「到 AI Studio 查看你自己的 rate limit」，額度是動態的、依帳號而異，而且社群回報過免費額度被下調。**請務必自己到 <https://aistudio.google.com/rate-limit> 確認你這個帳號實際的額度**，不要照抄任何教學文章上的數字。
+Gemini 的官方文件現在只寫「到 AI Studio 查看你自己的 rate limit」，額度是動態的、依帳號而異，而且社群回報過免費額度被下調。**請自己到 <https://aistudio.google.com/rate-limit> 確認你這個帳號實際的額度**，不要照抄任何教學文章上的數字。
 
-`gemini-2.5-pro` **未出現**在免費清單中，因此不納入白名單 —— 依規格「不確定就不假設免費」。
+兩家取得免費 Key 都不需要綁信用卡。⚠️ 但兩家都**沒有承諾免費層永久存在**。
 
-預設使用 `gemini-3.1-flash-lite`：Flash-Lite 系列針對高頻低成本場景設計，免費額度比 Flash 寬鬆，適合當聊天 Bot 的預設。想換模型用 `/settings model` 或 `/me model`。
+### 自動換手（fallback）
 
-本專案的處理方式：
+主力 provider 失敗時自動改用另一家免費 provider，換手時使用該 provider 標示為 production 的預設模型。
 
-- 額度用完時回傳「目前 AI 免費額度已用完，請稍後再試。」
-- **絕不自動切換到付費 API**（`ALLOW_PAID_PROVIDERS` 預設 `false`）
-- 內建三層 rate limit，避免單一使用者或伺服器把額度吃光
+| 失敗原因 | 會不會換手 |
+|---|---|
+| 額度用完（429） | ✅ |
+| 逾時 | ✅ |
+| API Key 錯誤（401 / 403） | ✅ |
+| 服務暫時故障（5xx） | ✅ |
+| **內容被安全機制擋下** | ❌ **絕不換手** |
+
+最後一列是刻意的：內容被擋不代表「這家壞了」，而是這個內容不該被產生。換一家重試等於在找一個肯講的 provider，所以直接把錯誤回給使用者。
+
+換手成功時，回覆下方會加一行小字說明這則是由誰回答的 —— 換了 provider 就是換了模型，風格與品質會不一樣，讓使用者知道比較誠實。用量統計也會記在真正回答的那家頭上。
+
+用 `AI_FALLBACK_ENABLED=false` 可以關掉換手。
+
+### 絕不自動切換到付費服務
+
+`ALLOW_PAID_PROVIDERS` 預設 `false`。Router 在挑選候選 provider 時會直接過濾掉標記為 `paid` 的，就算免費的全掛了也不會偷偷用付費服務 —— 只會回報錯誤。目前接的兩家都是免費層，這個開關是留給未來的保險。
+
+另外內建三層 rate limit（使用者 / 伺服器 / 全域），避免單一使用者或伺服器把免費額度吃光。
+
+### 查證過但**沒有**採用的 provider
+
+規格原本規劃了 Qwen 官方 API 與 NVIDIA NIM。實際查證官方文件後兩個都不適用：
+
+| Provider | 為什麼不用 |
+|---|---|
+| **NVIDIA NIM** | 免費的 Developer Program **條款禁止**這個用途。官方 FAQ：「Production use involves any use of NIM for purposes other than development, testing, research or evaluation such as conducting business transactions and **any non-testing activity including activity serving real end-users**.」公開邀請的 Discord Bot 正是 serving real end-users，要合法得買 NVIDIA AI Enterprise（起價 $4,500 / GPU / 年）。這是條款問題，不是額度問題 |
+| **Qwen 官方 DashScope** | 不是免費層，是**試用**。每個模型約 100 萬 token、**只有新加坡區有**、**90 天後歸零不補發**。之後自動轉 pay-as-you-go。拿它當備援，三個月後備援自己先死 |
+| **OpenRouter** | 免費模型每天只有 50 次請求（除非歷史累積購買過 $10 才變 1,000/天），太少不足以當主力。之後若需要第三層墊底可以再加 —— `OpenAiCompatibleProvider` 換個 baseUrl 就能接 |
+| **Cerebras** | 只有 $5 試用額度，不是免費層 |
+
+想用 Qwen 的話，**Groq 的免費層就有**（見上表），而且條款允許 —— 只是官方標為 preview。
 
 參考來源：
-- [Gemini API Pricing](https://ai.google.dev/gemini-api/docs/pricing)
-- [Gemini API Rate Limits](https://ai.google.dev/gemini-api/docs/rate-limits)
-- [可用模型清單](https://ai.google.dev/gemini-api/docs/models)
+[Gemini Pricing](https://ai.google.dev/gemini-api/docs/pricing) ·
+[Gemini Rate Limits](https://ai.google.dev/gemini-api/docs/rate-limits) ·
+[Gemini 模型清單](https://ai.google.dev/gemini-api/docs/models) ·
+[Groq Rate Limits](https://console.groq.com/docs/rate-limits) ·
+[Groq 模型清單](https://console.groq.com/docs/models) ·
+[Groq Services Agreement](https://console.groq.com/docs/legal/services-agreement) ·
+[NVIDIA NIM FAQ](https://docs.api.nvidia.com/nim/docs/product) ·
+[Alibaba Model Studio 免費額度](https://www.alibabacloud.com/help/en/model-studio/new-free-quota) ·
+[OpenRouter Limits](https://openrouter.ai/docs/api-reference/limits)
 
 ---
 
 ## 環境變數
 
-完整清單與說明見 [.env.example](.env.example)。必填只有三個：
+完整清單與說明見 [.env.example](.env.example)。必填的只有這些：
 
 | 變數 | 說明 |
 |---|---|
 | `DISCORD_TOKEN` | Bot Token |
 | `DISCORD_CLIENT_ID` | Application ID |
-| `GEMINI_API_KEY` | Gemini API Key |
+| `GEMINI_API_KEY` / `GROQ_API_KEY` | **至少填一把**，兩把都填就有自動換手 |
 
-其餘都有合理預設值。啟動時 Zod 會驗證，設定錯誤會直接印出哪一項有問題並結束，不會帶著壞設定半死不活地跑。
+常用的選填：
+
+| 變數 | 預設 | 說明 |
+|---|---|---|
+| `DEFAULT_MODEL` | `gemini-3.1-flash-lite` | 必須是有填 Key 的 provider 的模型 |
+| `AI_FALLBACK_ENABLED` | `true` | 免費 provider 之間的自動換手 |
+| `ALLOW_PAID_PROVIDERS` | `false` | 硬性預設，見上方說明 |
+
+其餘都有合理預設值。啟動時 Zod 會驗證，設定錯誤會直接印出哪一項有問題並結束，不會帶著壞設定半死不活地跑。驗證包含兩條跨欄位規則：至少要有一把 provider Key，而且 `DEFAULT_MODEL` 所屬的 provider 一定要有設定 Key —— 否則每一次對話都得靠 fallback 救援，那是設定錯誤，應該啟動時就講清楚。
 
 ---
 
@@ -493,8 +571,12 @@ crontab -e
 | Bot 只有被 @ 時才回 | 正常。用 `/settings ai-channel` 指定頻道後，該頻道才會自動回覆 |
 | 看不到 slash command | 全域指令最多需 1 小時。開發時設 `DEV_GUILD_ID` 可立即生效。也確認邀請時有勾 `applications.commands` |
 | `環境變數設定錯誤` | 訊息會列出缺哪一項，對照 `.env.example` 補上 |
-| 「目前 AI 免費額度已用完」 | Gemini 額度用盡。到 <https://aistudio.google.com/rate-limit> 查看實際額度，或調低 `RATE_LIMIT_*` |
-| 「AI 服務認證失敗」 | `GEMINI_API_KEY` 錯誤或已失效，重新產生 |
+| 「至少要設定一個 AI provider 的 API Key」 | `GEMINI_API_KEY` 與 `GROQ_API_KEY` 都沒填。填一把就能啟動 |
+| 「XXX 屬於 Gemini，但沒有設定它的 API Key」 | `DEFAULT_MODEL` 指向沒有 Key 的 provider。改模型或補 Key |
+| 「目前 AI 免費額度已用完」 | 所有已設定的 provider 都沒額度了。到 <https://aistudio.google.com/rate-limit> 與 <https://console.groq.com> 查看，或調低 `RATE_LIMIT_*` |
+| 回覆下面出現「改由 Groq 回答」 | 正常的自動換手，代表 Gemini 當下不可用。不想看到就設 `AI_FALLBACK_ENABLED=false`（但額度用完時就直接失敗了） |
+| 選模型時說「需要 Groq 的 API Key」 | 選單列出完整白名單，但那家沒設 Key。補上 `GROQ_API_KEY` 後重啟容器 |
+| 「AI 服務認證失敗」 | API Key 錯誤或已失效，重新產生 |
 | `unable to open database file` / `SQLITE_CANTOPEN` | 容器 uid 與 `./data` 擁有者不符。執行 `id -u` 與 `id -g`，把結果填進 `.env` 的 `APP_UID` / `APP_GID`，再 `docker compose up -d` |
 | 容器一直 restart | `docker compose logs --tail=50` 看實際錯誤，多半是環境變數沒填 |
 | healthcheck 顯示 unhealthy | Bot 沒連上 Discord。檢查 Token 是否正確、VM 是否有 outbound 網路 |

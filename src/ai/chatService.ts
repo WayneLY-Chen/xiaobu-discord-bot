@@ -7,10 +7,11 @@ import {
   touchConversation,
 } from '../database/repositories/conversations.js';
 import { recordUsage } from '../database/repositories/usage.js';
+import { PROVIDER_LABEL } from '../config/constants.js';
 import type { EffectiveSettings } from '../config/resolveSettings.js';
 import { buildChatHistory, sanitizeSpeakerLabel } from './context.js';
 import { buildSystemInstruction } from './prompt.js';
-import type { ChatProvider } from './gemini.js';
+import type { AiRouter } from './router.js';
 
 export interface ChatContext {
   guildId: string;
@@ -40,7 +41,7 @@ export class ChatService {
 
   constructor(
     private readonly db: Db,
-    private readonly provider: ChatProvider,
+    private readonly router: AiRouter,
     private readonly options: ChatServiceOptions,
   ) {
     this.botName = options.botName;
@@ -72,7 +73,7 @@ export class ChatService {
       userPersonality: settings.personality,
     });
 
-    const response = await this.provider.chat({
+    const response = await this.router.chat({
       model: settings.model,
       systemInstruction,
       history,
@@ -80,19 +81,24 @@ export class ChatService {
       timeoutMs: this.options.timeoutMs,
     });
 
+    // 只把模型真正說的話寫進對話紀錄。換手提示是給這一次的讀者看的，
+    // 不該混進之後送回模型的歷史。
     appendAssistantMessage(this.db, conversationId, response.text);
     touchConversation(this.db, conversationId);
 
     recordUsage(this.db, {
       guildId: context.guildId,
       userId: context.userId,
-      provider: 'gemini',
-      model: settings.model,
+      provider: response.provider,
+      model: response.model,
       kind: 'chat',
       tokensIn: response.tokensIn,
       tokensOut: response.tokensOut,
     });
 
-    return response.text;
+    if (!response.fellBack) return response.text;
+
+    // 換了 provider 等於換了模型，回答風格與品質會不一樣，讓使用者知道比較誠實
+    return `${response.text}\n-# ⚠️ 原本的 AI 服務暫時無法使用，這則改由 ${PROVIDER_LABEL[response.provider]} 回答。`;
   }
 }

@@ -1,6 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ChatService } from '../src/ai/chatService.js';
-import type { ChatProvider, ChatRequest, ChatResponse } from '../src/ai/gemini.js';
+import { AiRouter } from '../src/ai/router.js';
+import {
+  CHAT_ONLY,
+  type ChatProvider,
+  type ChatRequest,
+  type ChatResponse,
+} from '../src/ai/providers/types.js';
+import type { ProviderId } from '../src/config/constants.js';
+import { usage } from '../src/database/schema.js';
 import { QuotaExceededError } from '../src/utils/errors.js';
 import { createDatabase, type Db } from '../src/database/client.js';
 import { upsertGuild, upsertUser } from '../src/database/repositories/identity.js';
@@ -13,9 +21,14 @@ import { resolveSettings } from '../src/config/resolveSettings.js';
 
 /** 記錄收到的請求，讓測試可以檢查真正送給模型的內容。 */
 class FakeProvider implements ChatProvider {
+  readonly tier = 'free' as const;
+  readonly capabilities = CHAT_ONLY;
+
   readonly requests: ChatRequest[] = [];
   error: Error | null = null;
   reply = '這是回覆';
+
+  constructor(readonly id: ProviderId = 'gemini') {}
 
   async chat(request: ChatRequest): Promise<ChatResponse> {
     this.requests.push(request);
@@ -47,6 +60,11 @@ function contextFor(displayName: string, content: string, userId: string) {
   };
 }
 
+/** ChatService 現在透過 Router 取得回覆，這裡包一層只有單一 provider 的 Router。 */
+function routerFor(provider: ChatProvider): AiRouter {
+  return new AiRouter([provider], { allowPaidProviders: false, fallbackEnabled: true });
+}
+
 let db: Db;
 let close: () => void;
 let provider: FakeProvider;
@@ -62,7 +80,7 @@ beforeEach(() => {
   upsertUser(db, 'user456', 'Ming');
 
   provider = new FakeProvider();
-  service = new ChatService(db, provider, {
+  service = new ChatService(db, routerFor(provider), {
     botName: 'AI Bot',
     contextMessageLimit: 20,
     maxInputLength: 4000,
@@ -159,7 +177,7 @@ describe('ChatService', () => {
   });
 
   it('過長的輸入會被截斷，避免一個人吃掉整個 context', async () => {
-    const short = new ChatService(db, provider, {
+    const short = new ChatService(db, routerFor(provider), {
       botName: 'AI Bot',
       contextMessageLimit: 20,
       maxInputLength: 10,
@@ -202,5 +220,64 @@ describe('ChatService', () => {
     expect(provider.lastRequest.history).toEqual([
       { role: 'user', text: '[Wayne] B 說了什麼' },
     ]);
+  });
+
+  it('用量記錄的是實際回答的 provider 與 model', async () => {
+    await service.reply(contextFor('Wayne', '嗨', 'user123'), {
+      ...settings,
+      model: 'gemini-3.7-flash',
+    });
+
+    const rows = db.select({ provider: usage.provider, model: usage.model }).from(usage).all();
+
+    expect(rows).toEqual([{ provider: 'gemini', model: 'gemini-3.7-flash' }]);
+  });
+});
+
+describe('ChatService 換手到備援 provider 時', () => {
+  let backup: FakeProvider;
+  let fallbackService: ChatService;
+
+  beforeEach(() => {
+    provider.error = new QuotaExceededError();
+    backup = new FakeProvider('groq');
+    backup.reply = '備援的回覆';
+
+    fallbackService = new ChatService(
+      db,
+      new AiRouter([provider, backup], { allowPaidProviders: false, fallbackEnabled: true }),
+      {
+        botName: 'AI Bot',
+        contextMessageLimit: 20,
+        maxInputLength: 4000,
+        maxOutputTokens: 1024,
+        timeoutMs: 5000,
+      },
+    );
+  });
+
+  it('回覆後面附上提示，讓使用者知道換了服務', async () => {
+    const answer = await fallbackService.reply(contextFor('Wayne', '嗨', 'user123'), settings);
+
+    expect(answer).toContain('備援的回覆');
+    expect(answer).toContain('改由 Groq 回答');
+  });
+
+  it('提示只給這一次的讀者看，不會混進之後送回模型的歷史', async () => {
+    await fallbackService.reply(contextFor('Wayne', '嗨', 'user123'), settings);
+
+    const rows = getRecentMessages(db, getOrCreateConversation(db, 'serverA', 'chan1'), 10);
+    const assistant = rows.find((row) => row.role === 'assistant');
+
+    expect(assistant?.content).toBe('備援的回覆');
+    expect(assistant?.content).not.toContain('改由');
+  });
+
+  it('用量記在真正回答的那家頭上，而不是原本選的那家', async () => {
+    await fallbackService.reply(contextFor('Wayne', '嗨', 'user123'), settings);
+
+    const rows = db.select({ provider: usage.provider, model: usage.model }).from(usage).all();
+
+    expect(rows).toEqual([{ provider: 'groq', model: 'llama-3.3-70b-versatile' }]);
   });
 });

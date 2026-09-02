@@ -1022,11 +1022,16 @@ time
 
 Gemini quota exceeded
 
-→ 嘗試 Qwen
+→ 嘗試下一個**免費** provider
 
-如果 Qwen quota exceeded
+（實作結果：Groq。原訂的 Qwen 官方 API 與 NVIDIA 查證後不適用，理由見 Phase 2）
 
-→ 嘗試 NVIDIA
+換手時使用該 provider 標示為 production 的預設模型。
+
+**例外：內容被安全機制擋下時絕不換手。**
+
+那不是「這家壞了」，而是這個內容不該被產生；
+換一家重試等於在找一個肯講的 provider。
 
 但是：
 
@@ -1106,13 +1111,68 @@ AI Router
 
 Provider abstraction
 
-Qwen
-
-NVIDIA
+第二個免費 Provider
 
 Fallback
 
 完成測試。
+
+### Provider 查證結果（2026-09）
+
+開始實作前依 §11 查證官方文件，原訂的兩家都不適用：
+
+**NVIDIA NIM —— 排除，這是條款問題不是額度問題。**
+
+官方 FAQ 原文：
+
+> Production use involves any use of NIM for purposes other than
+> development, testing, research or evaluation such as conducting
+> business transactions and any non-testing activity
+> including activity serving real end-users.
+> Using NIM in production requires an NVIDIA AI Enterprise license.
+
+本 Bot 是可公開邀請、給真實 Discord 使用者用的，
+正好命中 serving real end-users。
+免費的 Developer Program 明文只給 prototyping / testing / research。
+要合法必須購買 NVIDIA AI Enterprise（起價 $4,500 / GPU / 年）。
+
+**Qwen 官方 DashScope —— 排除，那是試用不是免費層。**
+
+每個模型約 100 萬 token，只有新加坡區有，90 天後歸零且不補發、不延長。
+之後自動轉 pay-as-you-go。
+拿它當 fallback，三個月後 fallback 會自己先失效。
+
+**採用：Groq。**
+
+免費層每個模型 30 RPM / 1,000 RPD / 8K TPM / 200K TPD。
+Services Agreement §3.1 明文允許
+「make the Cloud Services and AI Model Services available to End Users
+through your Customer Applications」，
+與 NVIDIA 相反，公開 Bot 沒有條款問題。
+OpenAI 相容 API，抽象層可共用一份實作。
+
+而且 Groq 的免費層就有 Qwen，等於仍然達成原本「要有 Qwen」的目標。
+但官方把 Qwen 標為 preview（intended for evaluation purposes only、可能隨時下架），
+因此：不當預設、不當換手目標，只在選單中提供並標註風險。
+
+**未採用但可隨時加上：**
+
+OpenRouter 免費模型每天只有 50 次請求（除非歷史累積購買過 $10），
+太少不能當主力，但可以當第三層墊底 ——
+OpenAiCompatibleProvider 換個 baseUrl 就能接。
+
+Cerebras 只有 $5 試用額度，不是免費層。
+
+### 實作要點
+
+Provider 陣列的順序就是優先順序。
+
+至少要設定一把 provider API Key，
+且 DEFAULT_MODEL 所屬的 provider 必須有 Key —— 啟動時驗證。
+
+ALLOW_PAID_PROVIDERS=false 時，
+Router 直接把 tier=paid 的 provider 排除在候選之外，
+就算免費的全部失敗也不會使用，只回報錯誤。
 
 ---
 

@@ -16,7 +16,14 @@ import {
   resetGuildSettings,
   updateGuildSettings,
 } from '../database/repositories/settings.js';
-import { LOCALE_CHOICES, MODEL_CHOICES, describe, onOff, toStoredValue } from './shared.js';
+import {
+  LOCALE_CHOICES,
+  MODEL_CHOICES,
+  describe,
+  explainUnavailableModel,
+  onOff,
+  toStoredValue,
+} from './shared.js';
 
 export const settingsCommand: Command = {
   data: new SlashCommandBuilder()
@@ -129,6 +136,15 @@ export const settingsCommand: Command = {
 
       case 'model': {
         const model = toStoredValue(interaction.options.getString('model', true));
+
+        if (model) {
+          const unavailable = explainUnavailableModel(model, context.router);
+          if (unavailable) {
+            await reply(interaction, unavailable);
+            return;
+          }
+        }
+
         updateGuildSettings(db, guildId, { model });
         await reply(
           interaction,

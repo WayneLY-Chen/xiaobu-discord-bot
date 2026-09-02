@@ -1,6 +1,7 @@
 import { Events } from 'discord.js';
 import { ChatService } from './ai/chatService.js';
-import { GeminiClient } from './ai/gemini.js';
+import { createProviders } from './ai/providers/registry.js';
+import { AiRouter } from './ai/router.js';
 import { createClient } from './bot/client.js';
 import type { BotContext } from './bot/context.js';
 import { deployCommands } from './bot/deployCommands.js';
@@ -25,11 +26,19 @@ async function main(): Promise<void> {
   setLogLevel(env.LOG_LEVEL);
 
   if (env.ALLOW_PAID_PROVIDERS) {
-    logger.warn('ALLOW_PAID_PROVIDERS=true：已允許付費 provider。Phase 1 尚未接任何付費服務。');
+    logger.warn('ALLOW_PAID_PROVIDERS=true：已允許付費 provider。目前尚未接任何付費服務。');
   }
 
   const db = initDatabase(env.DATABASE_PATH);
-  const gemini = new GeminiClient(env.GEMINI_API_KEY);
+  const router = new AiRouter(createProviders(env), {
+    allowPaidProviders: env.ALLOW_PAID_PROVIDERS,
+    fallbackEnabled: env.AI_FALLBACK_ENABLED,
+  });
+
+  if (env.AI_FALLBACK_ENABLED && router.availableProviders.length < 2) {
+    logger.warn('只設定了一個 AI provider，額度用完時沒有其他免費服務可以接手。');
+  }
+
   const client = createClient();
 
   const context: BotContext = {
@@ -41,7 +50,8 @@ async function main(): Promise<void> {
       guildLimit: env.RATE_LIMIT_GUILD,
       globalLimit: env.RATE_LIMIT_GLOBAL,
     }),
-    chat: new ChatService(db, gemini, {
+    router,
+    chat: new ChatService(db, router, {
       botName: 'AI Bot',
       contextMessageLimit: env.CONTEXT_MESSAGE_LIMIT,
       maxInputLength: env.MAX_INPUT_LENGTH,

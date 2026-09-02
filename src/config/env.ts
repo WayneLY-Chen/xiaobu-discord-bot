@@ -1,6 +1,12 @@
 import { existsSync } from 'node:fs';
 import { z } from 'zod';
-import { ALLOWED_MODELS } from './constants.js';
+import { ALLOWED_MODELS, getModelSpec, PROVIDER_LABEL } from './constants.js';
+
+/** 空字串等同沒設定 —— .env 裡留白的那一行不該被當成有效的 API Key。 */
+const optionalSecret = z
+  .string()
+  .optional()
+  .transform((value) => (value && value.trim().length > 0 ? value.trim() : undefined));
 
 /** 環境變數只有字串，用這個把 "true"/"false" 轉成 boolean。 */
 const envBoolean = (defaultValue: boolean) =>
@@ -21,10 +27,15 @@ const envSchema = z.object({
   DEPLOY_COMMANDS_ON_START: envBoolean(true),
 
   // --- AI ---
-  GEMINI_API_KEY: z.string().min(1, 'GEMINI_API_KEY 未設定'),
+  // 兩把 Key 都是選填，但至少要有一把（下面的 superRefine 會檢查）。
+  // 這樣只想用 Groq 的人不必為了通過驗證去申請一把用不到的 Gemini Key。
+  GEMINI_API_KEY: optionalSecret,
+  GROQ_API_KEY: optionalSecret,
   DEFAULT_MODEL: z.enum(ALLOWED_MODELS).default('gemini-3.1-flash-lite'),
   /** 硬性要求：預設禁止任何付費 provider，且程式不得自動切換。 */
   ALLOW_PAID_PROVIDERS: envBoolean(false),
+  /** 主要 provider 掛掉時，是否自動改用其他**免費** provider 回答。 */
+  AI_FALLBACK_ENABLED: envBoolean(true),
   AI_TIMEOUT_MS: envInt(60_000, 1000),
   AI_MAX_OUTPUT_TOKENS: envInt(2048, 64),
 
@@ -46,7 +57,37 @@ const envSchema = z.object({
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   TZ: z.string().default('Asia/Taipei'),
-});
+})
+  .superRefine((env, ctx) => {
+    const configured = new Set(
+      [
+        env.GEMINI_API_KEY ? ('gemini' as const) : undefined,
+        env.GROQ_API_KEY ? ('groq' as const) : undefined,
+      ].filter((id) => id !== undefined),
+    );
+
+    if (configured.size === 0) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['GEMINI_API_KEY'],
+        message: '至少要設定一個 AI provider 的 API Key（GEMINI_API_KEY 或 GROQ_API_KEY）',
+      });
+      return;
+    }
+
+    // 預設模型指向一個沒有 Key 的 provider，會讓每一次對話都得靠 fallback 救援。
+    // 這是設定錯誤，啟動時就講清楚，不要等使用者踩到。
+    const spec = getModelSpec(env.DEFAULT_MODEL);
+    if (spec && !configured.has(spec.provider)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['DEFAULT_MODEL'],
+        message:
+          `${env.DEFAULT_MODEL} 屬於 ${PROVIDER_LABEL[spec.provider]}，` +
+          `但沒有設定它的 API Key。請改用已設定 provider 的模型，或補上該 Key。`,
+      });
+    }
+  });
 
 export type Env = z.infer<typeof envSchema>;
 

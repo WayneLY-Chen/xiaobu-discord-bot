@@ -1,4 +1,4 @@
-import type { ChatTurn } from './gemini.js';
+import type { ChatTurn } from './providers/types.js';
 import type { MessageRow } from '../database/schema.js';
 
 const MAX_LABEL_LENGTH = 32;

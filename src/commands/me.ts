@@ -15,7 +15,14 @@ import {
   updateUserSettings,
 } from '../database/repositories/settings.js';
 import { upsertUser } from '../database/repositories/identity.js';
-import { LOCALE_CHOICES, MODEL_CHOICES, describe, onOff, toStoredValue } from './shared.js';
+import {
+  LOCALE_CHOICES,
+  MODEL_CHOICES,
+  describe,
+  explainUnavailableModel,
+  onOff,
+  toStoredValue,
+} from './shared.js';
 
 export const meCommand: Command = {
   data: new SlashCommandBuilder()
@@ -87,6 +94,15 @@ export const meCommand: Command = {
 
       case 'model': {
         const model = toStoredValue(interaction.options.getString('model', true));
+
+        if (model) {
+          const unavailable = explainUnavailableModel(model, context.router);
+          if (unavailable) {
+            await reply(interaction, unavailable);
+            return;
+          }
+        }
+
         updateUserSettings(db, userId, { model });
         await reply(interaction, `你的偏好模型：${model ?? '跟隨伺服器設定'}`);
         return;

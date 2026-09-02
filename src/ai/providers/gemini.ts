@@ -5,35 +5,15 @@ import {
   ProviderTimeoutError,
   QuotaExceededError,
   UserFacingError,
-} from '../utils/errors.js';
-import { logger } from '../utils/logger.js';
-
-/** 送進模型的一輪對話。Gemini 用 'model' 表示 AI 那一方。 */
-export interface ChatTurn {
-  role: 'user' | 'model';
-  text: string;
-}
-
-export interface ChatRequest {
-  model: string;
-  systemInstruction: string;
-  history: ChatTurn[];
-  maxOutputTokens: number;
-  timeoutMs: number;
-}
-
-export interface ChatResponse {
-  text: string;
-  tokensIn: number;
-  tokensOut: number;
-}
-
-/** ChatService 只依賴這個介面，方便測試，也方便 Phase 2 換成其他 provider。 */
-export interface ChatProvider {
-  chat(request: ChatRequest): Promise<ChatResponse>;
-}
+} from '../../utils/errors.js';
+import { logger } from '../../utils/logger.js';
+import { CHAT_ONLY, type ChatProvider, type ChatRequest, type ChatResponse } from './types.js';
 
 export class GeminiClient implements ChatProvider {
+  readonly id = 'gemini' as const;
+  readonly tier = 'free' as const;
+  readonly capabilities = CHAT_ONLY;
+
   private readonly ai: GoogleGenAI;
 
   constructor(apiKey: string) {
@@ -82,8 +62,8 @@ export class GeminiClient implements ChatProvider {
 
 /**
  * 把 SDK 的錯誤轉成使用者看得懂的錯誤。
- * 這裡刻意不做「自動換 provider」，Planning §30 要求 Phase 2 才處理 fallback，
- * 而且絕不能自動切到付費服務。
+ * 這裡只負責分類，換手到別的 provider 是 AiRouter 的事 ——
+ * 而且 Router 絕不會自動切到付費服務（Planning §30）。
  */
 function translateGeminiError(error: unknown): UserFacingError {
   if (error instanceof UserFacingError) return error;
