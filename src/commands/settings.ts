@@ -9,6 +9,13 @@ import {
 } from 'discord.js';
 import type { BotContext, Command } from '../bot/context.js';
 import { MAX_SYSTEM_PROMPT_LENGTH } from '../config/constants.js';
+import {
+  addGuildFact,
+  listGuildFacts,
+  MAX_FACTS_PER_GUILD,
+  MAX_FACT_LENGTH,
+  removeGuildFact,
+} from '../database/repositories/guildFacts.js';
 import { resolveSettings } from '../config/resolveSettings.js';
 import {
   ensureGuildSettings,
@@ -95,6 +102,36 @@ export const settingsCommand: Command = {
             .setMaxLength(MAX_SYSTEM_PROMPT_LENGTH),
         ),
     )
+    .addSubcommandGroup((group) =>
+      group
+        .setName('facts')
+        .setDescription('伺服器共用的背景知識，小步跟每個人講話時都會知道')
+        .addSubcommand((sub) =>
+          sub
+            .setName('add')
+            .setDescription('新增一條伺服器背景知識')
+            .addStringOption((option) =>
+              option
+                .setName('content')
+                .setDescription('例如：本伺服器的「阿凱」是指 @某人；週會固定在每週三晚上八點')
+                .setRequired(true)
+                .setMaxLength(MAX_FACT_LENGTH),
+            ),
+        )
+        .addSubcommand((sub) => sub.setName('list').setDescription('列出所有伺服器背景知識'))
+        .addSubcommand((sub) =>
+          sub
+            .setName('remove')
+            .setDescription('刪除一條伺服器背景知識')
+            .addIntegerOption((option) =>
+              option
+                .setName('id')
+                .setDescription('編號（用 /settings facts list 查看）')
+                .setRequired(true)
+                .setMinValue(1),
+            ),
+        ),
+    )
     .addSubcommand((sub) => sub.setName('reset').setDescription('還原所有伺服器設定')),
 
   async execute(interaction, context) {
@@ -109,6 +146,11 @@ export const settingsCommand: Command = {
 
     const { db, env } = context;
     ensureGuildSettings(db, guildId);
+
+    if (interaction.options.getSubcommandGroup() === 'facts') {
+      await handleFacts(interaction, context, guildId);
+      return;
+    }
 
     switch (interaction.options.getSubcommand()) {
       case 'view': {
@@ -192,6 +234,74 @@ export const settingsCommand: Command = {
     }
   },
 };
+
+/**
+ * 伺服器共用背景知識。
+ *
+ * 與 /memory 的差別：memory 的範圍是 (guild_id, user_id)，每個人自己的；
+ * facts 的範圍是 (guild_id)，整個伺服器共用，因此只有 Manage Guild 能改。
+ * 內容會直接進 system prompt，由設定的管理員自行負責。
+ */
+async function handleFacts(
+  interaction: ChatInputCommandInteraction,
+  context: BotContext,
+  guildId: string,
+): Promise<void> {
+  const { db } = context;
+
+  switch (interaction.options.getSubcommand()) {
+    case 'add': {
+      const content = interaction.options.getString('content', true);
+      const outcome = addGuildFact(db, guildId, content, interaction.user.id);
+
+      await reply(
+        interaction,
+        outcome.status === 'duplicate'
+          ? '這條背景知識已經存在了。'
+          : outcome.status === 'full'
+            ? `已達上限（${MAX_FACTS_PER_GUILD} 條），請先用 \`/settings facts remove\` 刪掉一些。`
+            : `已新增（目前共 ${outcome.total} 條）。小步之後跟這個伺服器的人講話都會知道這件事。`,
+      );
+      return;
+    }
+
+    case 'list': {
+      const rows = listGuildFacts(db, guildId);
+
+      if (rows.length === 0) {
+        await reply(interaction, '目前沒有設定任何伺服器背景知識。');
+        return;
+      }
+
+      const embed = new EmbedBuilder()
+        .setTitle(`${interaction.guild?.name ?? '這個伺服器'} 的背景知識`)
+        .setColor(0xfee75c)
+        .setDescription(
+          rows.map((row) => `\`#${row.id}\` ${row.content}　—　<@${row.createdBy}>`).join('\n'),
+        )
+        .setFooter({
+          text: `${rows.length} / ${MAX_FACTS_PER_GUILD} 條　全伺服器共用，內容由新增的管理員負責`,
+        });
+
+      await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+      return;
+    }
+
+    case 'remove': {
+      const id = interaction.options.getInteger('id', true);
+      const removed = removeGuildFact(db, guildId, id);
+
+      await reply(
+        interaction,
+        removed ? `已刪除 #${id}。` : `找不到編號 #${id}。用 \`/settings facts list\` 確認編號。`,
+      );
+      return;
+    }
+
+    default:
+      await reply(interaction, '未知的子指令。');
+  }
+}
 
 function buildSettingsEmbed(
   guildName: string,

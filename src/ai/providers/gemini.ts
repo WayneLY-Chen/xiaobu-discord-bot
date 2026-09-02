@@ -1,4 +1,11 @@
-import { GoogleGenAI } from '@google/genai';
+import {
+  GoogleGenAI,
+  Type,
+  type Content,
+  type FunctionDeclaration,
+  type Part,
+  type Schema,
+} from '@google/genai';
 import {
   ContentBlockedError,
   ProviderAuthError,
@@ -7,12 +14,21 @@ import {
   UserFacingError,
 } from '../../utils/errors.js';
 import { logger } from '../../utils/logger.js';
-import { CHAT_ONLY, type ChatProvider, type ChatRequest, type ChatResponse } from './types.js';
+import {
+  CHAT_WITH_TOOLS,
+  type ChatProvider,
+  type ChatRequest,
+  type ChatResponse,
+  type ChatTurn,
+  type ToolCall,
+  type ToolDefinition,
+  type ToolParameterSchema,
+} from './types.js';
 
 export class GeminiClient implements ChatProvider {
   readonly id = 'gemini' as const;
   readonly tier = 'free' as const;
-  readonly capabilities = CHAT_ONLY;
+  readonly capabilities = CHAT_WITH_TOOLS;
 
   private readonly ai: GoogleGenAI;
 
@@ -27,21 +43,22 @@ export class GeminiClient implements ChatProvider {
     try {
       const response = await this.ai.models.generateContent({
         model: request.model,
-        contents: request.history.map((turn) => ({
-          role: turn.role,
-          parts: [{ text: turn.text }],
-        })),
+        contents: toContents(request.history),
         config: {
           systemInstruction: request.systemInstruction,
           maxOutputTokens: request.maxOutputTokens,
           abortSignal: controller.signal,
+          ...(request.tools?.length
+            ? { tools: [{ functionDeclarations: request.tools.map(toFunctionDeclaration) }] }
+            : {}),
         },
       });
 
       const text = response.text?.trim() ?? '';
+      const toolCalls = readToolCalls(response.candidates?.[0]?.content?.parts);
 
-      if (text.length === 0) {
-        // 空回應通常代表被安全機制擋下，或是 maxOutputTokens 太小
+      // 模型決定先呼叫工具時，text 本來就會是空的 —— 那不是被擋下
+      if (text.length === 0 && toolCalls.length === 0) {
         throw new ContentBlockedError(
           `finishReason=${response.candidates?.[0]?.finishReason ?? 'unknown'}`,
         );
@@ -51,6 +68,7 @@ export class GeminiClient implements ChatProvider {
         text,
         tokensIn: response.usageMetadata?.promptTokenCount ?? 0,
         tokensOut: response.usageMetadata?.candidatesTokenCount ?? 0,
+        ...(toolCalls.length > 0 ? { toolCalls } : {}),
       };
     } catch (error) {
       throw translateGeminiError(error);
@@ -58,6 +76,100 @@ export class GeminiClient implements ChatProvider {
       clearTimeout(timer);
     }
   }
+}
+
+/**
+ * 把內部的對話格式轉成 Gemini 的 Content。
+ *
+ * Gemini 沒有獨立的 tool 角色：工具結果是放在 user 角色的 functionResponse part 裡，
+ * 這是 SDK 規定的形式，不是我們自己選的。
+ */
+function toContents(history: ChatTurn[]): Content[] {
+  return history.map((turn): Content => {
+    if (turn.role === 'tool') {
+      return {
+        role: 'user',
+        parts: [
+          { functionResponse: { name: turn.toolName, response: { result: turn.text } } },
+        ],
+      };
+    }
+
+    if (turn.role === 'model' && turn.toolCalls?.length) {
+      // thoughtSignature 一定要原封不動帶回去：Gemini 3.x 少了它會回 400
+      // INVALID_ARGUMENT，整個工具流程會直接失敗。
+      const parts: Part[] = turn.toolCalls.map((call) => ({
+        functionCall: { name: call.name, args: call.args },
+        ...(call.signature ? { thoughtSignature: call.signature } : {}),
+      }));
+
+      // 模型有時會一邊說話一邊呼叫工具，有文字就一起帶上
+      return {
+        role: 'model',
+        parts: turn.text.length > 0 ? [{ text: turn.text }, ...parts] : parts,
+      };
+    }
+
+    return { role: turn.role, parts: [{ text: turn.text }] };
+  });
+}
+
+function toFunctionDeclaration(tool: ToolDefinition): FunctionDeclaration {
+  return {
+    name: tool.name,
+    description: tool.description,
+    parameters: toGeminiSchema(tool.parameters),
+  };
+}
+
+/** Gemini 的 Schema 用 OpenAPI 風格的大寫型別名稱，與 JSON Schema 的小寫不同。 */
+function toGeminiSchema(schema: ToolParameterSchema): Schema {
+  const properties: Record<string, Schema> = {};
+
+  for (const [name, property] of Object.entries(schema.properties)) {
+    properties[name] = {
+      type:
+        property.type === 'number'
+          ? Type.NUMBER
+          : property.type === 'boolean'
+            ? Type.BOOLEAN
+            : Type.STRING,
+      description: property.description,
+      ...(property.enum ? { enum: [...property.enum] } : {}),
+    };
+  }
+
+  return { type: Type.OBJECT, properties, required: [...schema.required] };
+}
+
+/**
+ * 從回應的 parts 讀出工具呼叫。
+ *
+ * 刻意走 parts 而不是方便的 `response.functionCalls`：thoughtSignature 掛在
+ * **Part** 上而不是 FunctionCall 上，用 functionCalls 就拿不到，
+ * 下一輪把歷史送回去時 Gemini 會回 400。
+ *
+ * Gemini 的 functionCall 也不一定帶 id，為了讓歷史格式與 OpenAI 相容端點一致
+ *（Router 換手時兩邊看到的歷史才不會對不起來），沒有 id 就自己補一個。
+ */
+function readToolCalls(parts: Part[] | undefined): ToolCall[] {
+  if (!parts?.length) return [];
+
+  const calls: ToolCall[] = [];
+
+  for (const part of parts) {
+    const call = part.functionCall;
+    if (!call?.name) continue;
+
+    calls.push({
+      id: call.id ?? `gemini_call_${calls.length}`,
+      name: call.name,
+      args: call.args ?? {},
+      ...(part.thoughtSignature ? { signature: part.thoughtSignature } : {}),
+    });
+  }
+
+  return calls;
 }
 
 /**

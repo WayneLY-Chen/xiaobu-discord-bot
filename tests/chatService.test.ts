@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ChatService } from '../src/ai/chatService.js';
 import { AiRouter } from '../src/ai/router.js';
+import { SearchRouter } from '../src/ai/search/router.js';
 import {
   CHAT_ONLY,
   type ChatProvider,
@@ -65,6 +66,19 @@ function routerFor(provider: ChatProvider): AiRouter {
   return new AiRouter([provider], { allowPaidProviders: false, fallbackEnabled: true });
 }
 
+/** 沒有任何搜尋來源：這些測試驗的是聊天流程，搜尋另有專門的測試。 */
+const noSearch = new SearchRouter([]);
+
+const baseOptions = {
+  botName: 'AI Bot',
+  contextMessageLimit: 20,
+  maxInputLength: 4000,
+  maxOutputTokens: 1024,
+  timeoutMs: 5000,
+  toolTimeoutMs: 5000,
+  timezone: 'Asia/Taipei',
+};
+
 let db: Db;
 let close: () => void;
 let provider: FakeProvider;
@@ -80,13 +94,7 @@ beforeEach(() => {
   upsertUser(db, 'user456', 'Ming');
 
   provider = new FakeProvider();
-  service = new ChatService(db, routerFor(provider), {
-    botName: 'AI Bot',
-    contextMessageLimit: 20,
-    maxInputLength: 4000,
-    maxOutputTokens: 1024,
-    timeoutMs: 5000,
-  });
+  service = new ChatService(db, routerFor(provider), noSearch, baseOptions);
 });
 
 afterEach(() => close());
@@ -177,12 +185,9 @@ describe('ChatService', () => {
   });
 
   it('過長的輸入會被截斷，避免一個人吃掉整個 context', async () => {
-    const short = new ChatService(db, routerFor(provider), {
-      botName: 'AI Bot',
-      contextMessageLimit: 20,
+    const short = new ChatService(db, routerFor(provider), noSearch, {
+      ...baseOptions,
       maxInputLength: 10,
-      maxOutputTokens: 1024,
-      timeoutMs: 5000,
     });
 
     await short.reply(contextFor('Wayne', 'a'.repeat(100), 'user123'), settings);
@@ -246,13 +251,8 @@ describe('ChatService 換手到備援 provider 時', () => {
     fallbackService = new ChatService(
       db,
       new AiRouter([provider, backup], { allowPaidProviders: false, fallbackEnabled: true }),
-      {
-        botName: 'AI Bot',
-        contextMessageLimit: 20,
-        maxInputLength: 4000,
-        maxOutputTokens: 1024,
-        timeoutMs: 5000,
-      },
+      noSearch,
+      baseOptions,
     );
   });
 

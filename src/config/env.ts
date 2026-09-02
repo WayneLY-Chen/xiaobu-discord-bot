@@ -39,6 +39,15 @@ const envSchema = z.object({
   AI_TIMEOUT_MS: envInt(60_000, 1000),
   AI_MAX_OUTPUT_TOKENS: envInt(2048, 64),
 
+  // --- 工具（Phase 3）---
+  /**
+   * Tavily 搜尋。選填 —— 沒設定就只用 Gemini 的 Google 搜尋 grounding。
+   * 免費層每月 1,000 次、每月 1 號重置、不需要綁信用卡。
+   */
+  TAVILY_API_KEY: optionalSecret,
+  /** 單一工具呼叫的逾時。比 AI_TIMEOUT_MS 短，卡住的工具不該拖垮整輪對話。 */
+  TOOL_TIMEOUT_MS: envInt(15_000, 1000),
+
   // --- 對話上下文 ---
   /** 每次送進模型的歷史訊息則數（含 bot 回覆）。 */
   CONTEXT_MESSAGE_LIMIT: envInt(20, 2),

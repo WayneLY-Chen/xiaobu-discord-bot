@@ -7,7 +7,15 @@ import {
   UserFacingError,
 } from '../../utils/errors.js';
 import { logger } from '../../utils/logger.js';
-import { CHAT_ONLY, type ChatProvider, type ChatRequest, type ChatResponse } from './types.js';
+import {
+  CHAT_WITH_TOOLS,
+  type ChatProvider,
+  type ChatRequest,
+  type ChatResponse,
+  type ChatTurn,
+  type ToolCall,
+  type ToolDefinition,
+} from './types.js';
 
 export interface OpenAiCompatibleOptions {
   id: ProviderId;
@@ -21,9 +29,19 @@ export interface OpenAiCompatibleOptions {
   fetchImpl?: typeof fetch;
 }
 
+interface OpenAiMessage {
+  role: 'system' | 'user' | 'assistant' | 'tool';
+  content: string | null;
+  tool_calls?: { id: string; type: 'function'; function: { name: string; arguments: string } }[];
+  tool_call_id?: string;
+}
+
 interface ChatCompletionResponse {
   choices?: {
-    message?: { content?: string | null };
+    message?: {
+      content?: string | null;
+      tool_calls?: { id?: string; function?: { name?: string; arguments?: string } }[];
+    };
     finish_reason?: string;
   }[];
   usage?: {
@@ -43,7 +61,7 @@ interface ChatCompletionResponse {
 export class OpenAiCompatibleProvider implements ChatProvider {
   readonly id: ProviderId;
   readonly tier: 'free' | 'paid';
-  readonly capabilities = CHAT_ONLY;
+  readonly capabilities = CHAT_WITH_TOOLS;
 
   private readonly options: OpenAiCompatibleOptions;
   private readonly fetchImpl: typeof fetch;
@@ -66,19 +84,15 @@ export class OpenAiCompatibleProvider implements ChatProvider {
           'content-type': 'application/json',
           authorization: `Bearer ${this.options.apiKey}`,
         },
-        // 注意：不送 messages[].name。Groq 收到這個欄位會直接回 400。
-        // 說話者是用內文的 `[名字]` 前綴表示的（見 src/ai/context.ts）。
         body: JSON.stringify({
           model: request.model,
           messages: [
             { role: 'system', content: request.systemInstruction },
-            ...request.history.map((turn) => ({
-              role: turn.role === 'model' ? 'assistant' : 'user',
-              content: turn.text,
-            })),
+            ...request.history.map(toOpenAiMessage),
           ],
           max_tokens: request.maxOutputTokens,
           stream: false,
+          ...(request.tools?.length ? { tools: request.tools.map(toOpenAiTool) } : {}),
         }),
         signal: controller.signal,
       });
@@ -91,8 +105,10 @@ export class OpenAiCompatibleProvider implements ChatProvider {
 
       const choice = payload.choices?.[0];
       const text = stripReasoning(choice?.message?.content ?? '');
+      const toolCalls = readToolCalls(choice?.message?.tool_calls);
 
-      if (text.length === 0) {
+      // 模型決定先呼叫工具時，content 本來就會是空的 —— 那不是被擋下
+      if (text.length === 0 && toolCalls.length === 0) {
         throw explainEmptyResponse(choice?.finish_reason);
       }
 
@@ -100,6 +116,7 @@ export class OpenAiCompatibleProvider implements ChatProvider {
         text,
         tokensIn: payload.usage?.prompt_tokens ?? 0,
         tokensOut: payload.usage?.completion_tokens ?? 0,
+        ...(toolCalls.length > 0 ? { toolCalls } : {}),
       };
     } catch (error) {
       throw this.translateError(error);
@@ -139,6 +156,82 @@ export class OpenAiCompatibleProvider implements ChatProvider {
 
     logger.error(`${this.options.label} 未分類錯誤`, error);
     return new UserFacingError('AI 服務暫時無法使用，請稍後再試。', error);
+  }
+}
+
+/**
+ * 注意：不送 messages[].name。Groq 收到這個欄位會直接回 400。
+ * 說話者是用內文的 `[名字]` 前綴表示的（見 src/ai/context.ts）。
+ */
+function toOpenAiMessage(turn: ChatTurn): OpenAiMessage {
+  if (turn.role === 'tool') {
+    return { role: 'tool', tool_call_id: turn.toolCallId, content: turn.text };
+  }
+
+  if (turn.role === 'model') {
+    const base: OpenAiMessage = {
+      role: 'assistant',
+      // 只呼叫工具、沒說話時 content 必須是 null 而不是空字串
+      content: turn.text.length > 0 ? turn.text : null,
+    };
+
+    if (!turn.toolCalls?.length) return base;
+
+    return {
+      ...base,
+      tool_calls: turn.toolCalls.map((call) => ({
+        id: call.id,
+        type: 'function' as const,
+        function: { name: call.name, arguments: JSON.stringify(call.args) },
+      })),
+    };
+  }
+
+  return { role: 'user', content: turn.text };
+}
+
+function toOpenAiTool(tool: ToolDefinition) {
+  return {
+    type: 'function' as const,
+    function: {
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.parameters,
+    },
+  };
+}
+
+function readToolCalls(
+  calls: { id?: string; function?: { name?: string; arguments?: string } }[] | undefined,
+): ToolCall[] {
+  if (!calls?.length) return [];
+
+  const parsed: ToolCall[] = [];
+
+  for (const [index, call] of calls.entries()) {
+    const name = call.function?.name;
+    if (!name) continue;
+
+    parsed.push({
+      id: call.id ?? `call_${index}`,
+      name,
+      // 模型產生的 arguments 是字串，內容不保證是合法 JSON，壞掉就當成沒有參數，
+      // 讓工具自己的參數驗證去回報哪裡不對，而不是在這裡整個炸掉
+      args: safeParseArgs(call.function?.arguments),
+    });
+  }
+
+  return parsed;
+}
+
+function safeParseArgs(raw: string | undefined): Record<string, unknown> {
+  if (!raw) return {};
+
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>) : {};
+  } catch {
+    return {};
   }
 }
 

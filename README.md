@@ -12,7 +12,7 @@
 
 小步是一個 18 歲女生設定的聊天夥伴。在多人頻道中她分得出誰是誰，不會把大家的話混在一起 —— 這是本專案在架構上最花心思的地方，詳見[說話者識別怎麼運作](#說話者識別怎麼運作)。
 
-> **目前進度：Phase 2 已完成。** 聊天、多伺服器隔離、個人設定、SQLite 持久化、Docker 部署、多 AI Provider 與自動換手都可實際使用。搜尋、生圖、長期記憶、音樂、語音尚未實作 —— 詳見下方「功能狀態」。
+> **目前進度：Phase 3 已完成。** 聊天、多伺服器隔離、多 AI Provider 與自動換手、網路搜尋、天氣、計算機、長期記憶、伺服器背景知識都可實際使用。生圖、音樂、語音尚未實作 —— 詳見下方「功能狀態」。
 
 ---
 
@@ -24,6 +24,7 @@
 - [系統需求](#系統需求)
 - [Discord Bot 設定](#discord-bot-設定)
 - [AI Provider 與免費額度](#ai-provider-與免費額度)
+- [工具（Tool Calling）](#工具tool-calling)
 - [環境變數](#環境變數)
 - [本機開發](#本機開發)
 - [Docker](#docker)
@@ -61,6 +62,12 @@
 | 說話者識別 | 多人頻道中，Bot 知道每一則是誰說的 |
 | 多 AI Provider | Gemini 與 Groq，13 個免費模型可選 |
 | 自動換手 | 主力 provider 額度用完時改用另一家免費服務，**絕不自動切付費** |
+| 網路搜尋 | 問即時資訊會自己去查，回覆下方附上真實來源 |
+| 天氣 | 全球城市的目前天氣與三天預報 |
+| 計算機 | 自己寫的安全求值器，**不使用 eval** |
+| 時間 | 模型不知道「今天」，這個工具補上 |
+| 長期記憶 | `/memory`，範圍 (伺服器, 使用者)，跨伺服器與跨人都不互通 |
+| 伺服器背景知識 | `/settings facts`，全伺服器共用，僅 Manage Guild 可改 |
 | 短期對話記憶 | 每個頻道一條上下文，重啟後仍保留 |
 | 多伺服器隔離 | 每個 Server 獨立設定，資料互不流通 |
 | 個人設定 | 偏好模型、語言、回覆風格 |
@@ -75,13 +82,13 @@
 
 | 功能 | 排定階段 |
 |---|---|
-| Web Search、計算機、天氣、Tool Calling | Phase 3 |
-| 長期記憶 `/memory` | Phase 3 |
 | AI 生圖 | Phase 4 |
 | YouTube 音樂播放 | Phase 5 |
 | 語音、STT、TTS | Phase 6 |
 
-資料庫已建好 `memories` 與 `music_queues` 資料表，`/settings` 也保留了 image / music / voice 開關欄位，但**打開這些開關目前不會有任何效果**。
+資料庫已建好 `music_queues` 資料表，`/settings` 也保留了 image / music / voice 開關欄位，但**打開這些開關目前不會有任何效果**。
+
+> ⚠️ 音樂（Phase 5）與語音（Phase 6）在這個規格的機器上不一定做得起來 —— YouTube 條款與機房 IP 封鎖是主要障礙，不是程式問題。到那個階段會實測後再決定，詳見 `Planning.md`。
 
 ---
 
@@ -105,6 +112,12 @@ events/messageCreate ──► rate limiter ──► ChatService
 
 AiRouter：依選到的 model 決定 provider，失敗時在**免費** provider 之間換手，
          且永遠不會自動使用標記為 paid 的 provider。
+
+模型要求呼叫工具時，ChatService 執行工具再把結果送回模型，最多 3 輪：
+
+  模型 ──要求 web_search──► ToolRegistry ──► SearchRouter ──► Tavily / Gemini grounding
+    ▲                            │
+    └────── 工具結果送回 ─────────┘
 ```
 
 ```
@@ -115,9 +128,9 @@ src/
 │   ├── constants.ts             MODEL_CATALOG：model -> provider 對照與白名單
 │   └── resolveSettings.ts       個人 > 伺服器 > 系統預設
 ├── database/
-│   ├── schema.ts                Drizzle schema（9 張表）
+│   ├── schema.ts                Drizzle schema（10 張表）
 │   ├── client.ts                連線、migration、pragma
-│   └── repositories/            identity / settings / conversations / usage
+│   └── repositories/            identity / settings / conversations / usage / memories / guildFacts
 ├── ai/
 │   ├── providers/
 │   │   ├── types.ts             ChatProvider 介面與能力宣告
@@ -126,11 +139,25 @@ src/
 │   │   ├── groq.ts              Groq 的設定
 │   │   └── registry.ts          依環境變數組出可用 provider（陣列順序＝優先順序）
 │   ├── router.ts                選 provider、換手、付費防護
+│   ├── search/
+│   │   ├── types.ts             SearchProvider 介面
+│   │   ├── tavily.ts            Tavily（預設）
+│   │   ├── geminiGrounding.ts   Google 搜尋 grounding（備援）
+│   │   ├── router.ts            搜尋來源之間的換手
+│   │   └── registry.ts          依環境變數組出搜尋來源
+│   ├── tools/
+│   │   ├── types.ts             Tool 介面與參數驗證
+│   │   ├── search.ts            web_search
+│   │   ├── weather.ts           get_weather（Open-Meteo）
+│   │   ├── calculator.ts        calculate（自寫求值器，不用 eval）
+│   │   ├── time.ts              get_current_time
+│   │   ├── memory.ts            remember / recall_memories / forget
+│   │   └── registry.ts          工具清單與執行
 │   ├── context.ts               說話者標記與對話歷史組裝
-│   ├── prompt.ts                system instruction
-│   └── chatService.ts           一則訊息 -> 一則回覆的完整流程
+│   ├── prompt.ts                system instruction（含記憶與背景知識注入）
+│   └── chatService.ts           一則訊息 -> 一則回覆，含工具迴圈
 ├── bot/                         client、指令註冊、健康檢查
-├── commands/                    help / settings / me / reset / usage
+├── commands/                    help / settings / me / memory / reset / usage
 ├── events/                      messageCreate / interactionCreate / guildLifecycle
 └── utils/                       rateLimiter / messageChunk / errors / logger
 ```
@@ -316,6 +343,76 @@ Gemini 的官方文件現在只寫「到 AI Studio 查看你自己的 rate limit
 
 ---
 
+## 工具（Tool Calling）
+
+小步會自己判斷要不要用工具，**不需要打指令**，直接用講的就好。
+
+| 工具 | 什麼時候會用 | 資料來源 |
+|---|---|---|
+| `web_search` | 新聞、目前狀況、價格、版本號等會變動的事 | Tavily → Gemini grounding |
+| `get_weather` | 問某個城市的天氣 | Open-Meteo |
+| `calculate` | 需要精確數值的計算 | 本機（自己寫的求值器） |
+| `get_current_time` | 現在幾點、今天幾號、還有幾天 | 本機 |
+| `remember` / `recall_memories` / `forget` | 使用者說「記住…」「忘掉…」 | 本機 SQLite |
+
+工具都有 JSON schema 與參數驗證（規格 §29）。模型給錯參數時會收到說明並自己重試，而不是讓整輪對話失敗。最多連續呼叫 **3 輪**工具，第 4 輪不再提供工具，逼模型用手上的資料把話講完。
+
+### 搜尋
+
+免費層現況（2026-09 查證）：
+
+| 來源 | 額度 | 綁卡 | 特點 |
+|---|---|---|---|
+| **Tavily**（預設） | 每月 1,000 次，每月 1 號重置 | ❌ | 乾淨原始網址，新聞查詢附發布日期 |
+| **Gemini grounding**（備援） | 每天 500 次 | ❌ | 額度大 15 倍，但來源是 Google 轉址連結、沒有日期 |
+
+順序是「品質好的先用，用完換額度大的」。Tavily 額度用盡（HTTP 429/432）會自動換手。
+
+> ⚠️ 免費的 Google Search grounding **只有 `gemini-2.5-flash` 與 `gemini-2.5-flash-lite` 有**，Gemini 3.x 全系列都是「Not available」。所以搜尋工具內部固定叫 `gemini-2.5-flash-lite`，跟使用者聊天時選的模型無關 —— 這也表示**主回答由 Groq 產生時一樣能搜尋**。副作用是免費資格綁在舊版模型上，2.5 哪天下架這條備援就沒了，這正是預設用 Tavily 的原因。
+
+**來源清單直接用搜尋 API 回傳的資料組成，不經過模型。** 規格 §12 要求「不得捏造來源」，讓模型自己轉述網址一定會有改寫或編造的風險，所以程式在回覆下方自己附上，並在 prompt 裡叫模型不要自己列網址。網址用 `<>` 包起來，Discord 才不會為每條來源展開一張預覽卡。
+
+兩個都沒設定時，搜尋工具**不會提供給模型** —— 免得它呼叫了才發現用不了，白白浪費一輪。`/help` 也會跟著不列出搜尋。
+
+### 天氣
+
+Open-Meteo，免費且不需要 API Key，每天 10,000 次、每分鐘 600 次。條款是 non-commercial use，小步不營利所以符合。
+
+> ⚠️ 實測發現它的地理編碼**只認英文或羅馬拼音**：查 `台北` 回空結果，查 `Taipei` 才回台北市。所以工具描述明確要求模型用英文城市名，查不到時也回傳可行動的訊息讓模型改寫重試。使用者仍然可以直接用中文問。
+
+### 計算機
+
+**不使用 `eval` 或 `new Function`**（規格 §28：不要讓 AI 直接執行任意程式碼）。這是自己寫的遞迴下降解析器，只認得數字、四則運算、括號與白名單內的函式。就算模型被誘導產生 `process.exit()`、`require("fs")`、`[].constructor` 之類的字串，也只會得到語法錯誤 —— 測試裡有一組專門驗這件事。
+
+支援 `+ - * / % ^`、全形 `× ÷`、括號、科學記號、底線分隔，以及 `sqrt abs round floor ceil ln log sin cos tan min max pow` 與常數 `pi`、`e`。
+
+### 長期記憶
+
+範圍是 **`(guild_id, user_id)`**：每個人在每個伺服器一份。
+
+- 同一個人在不同伺服器是**兩份**資料，互不互通（規格 §17）
+- 同一個伺服器的不同人也互不互通
+- 上限每人每伺服器 50 則，單則 300 字
+
+不會把所有聊天訊息都存成記憶（§16 明令禁止）—— 只有使用者明確要求、或講到明顯值得長期記得的事，模型才會呼叫 `remember`。已存的記憶會自動注入 system instruction，所以換個頻道問也記得。
+
+`/me memory` 或 `/settings memory` 關閉後，記憶工具**不會提供給模型**，注入也會停止 —— 關掉就是真的關掉，不是靠 prompt 拜託模型別用。但 `/memory list`、`delete`、`clear` 仍然可用：使用者必須永遠看得到也刪得掉自己的資料。
+
+### 伺服器背景知識
+
+`/settings facts`，範圍是 **`(guild_id)`**，整個伺服器共用，只有 Manage Guild 權限能增刪。適合放伺服器內部的稱呼、術語、慣例。
+
+與長期記憶的差別：
+
+| | 範圍 | 誰能改 | 誰看得到 |
+|---|---|---|---|
+| `memories` | `(guild_id, user_id)` | 使用者自己 | 只有自己 |
+| `guild_facts` | `(guild_id)` | Manage Guild | 全伺服器 |
+
+會記錄是誰新增的，出事查得到。**內容由設定的管理員自行決定並負責。**
+
+---
+
 ## 環境變數
 
 完整清單與說明見 [.env.example](.env.example)。必填的只有這些：
@@ -333,6 +430,8 @@ Gemini 的官方文件現在只寫「到 AI Studio 查看你自己的 rate limit
 | `DEFAULT_MODEL` | `gemini-3.1-flash-lite` | 必須是有填 Key 的 provider 的模型 |
 | `AI_FALLBACK_ENABLED` | `true` | 免費 provider 之間的自動換手 |
 | `ALLOW_PAID_PROVIDERS` | `false` | 硬性預設，見上方說明 |
+| `TAVILY_API_KEY` | 空 | 搜尋主力。沒填就只用 Gemini grounding |
+| `TOOL_TIMEOUT_MS` | `15000` | 單一工具呼叫的逾時 |
 
 其餘都有合理預設值。啟動時 Zod 會驗證，設定錯誤會直接印出哪一項有問題並結束，不會帶著壞設定半死不活地跑。驗證包含兩條跨欄位規則：至少要有一把 provider Key，而且 `DEFAULT_MODEL` 所屬的 provider 一定要有設定 Key —— 否則每一次對話都得靠 fallback 救援，那是設定錯誤，應該啟動時就講清楚。
 
@@ -493,6 +592,10 @@ docker compose ps      # 應該顯示 running (healthy)
 | `/me personality` | 所有人 | 回覆風格 |
 | `/me memory` | 所有人 | 開關自己的記憶功能 |
 | `/me reset` | 所有人 | 還原個人設定 |
+| `/memory list` | 所有人 | 看小步記得你哪些事 |
+| `/memory add` | 所有人 | 手動新增一則記憶 |
+| `/memory delete` | 所有人 | 刪除一則記憶 |
+| `/memory clear` | 所有人 | 清空自己在這個伺服器的記憶 |
 | `/settings view` | Manage Guild | 查看伺服器設定 |
 | `/settings ai-channel` | Manage Guild | 指定 AI 頻道 |
 | `/settings model` | Manage Guild | 伺服器預設模型 |
@@ -500,10 +603,15 @@ docker compose ps      # 應該顯示 running (healthy)
 | `/settings chat` | Manage Guild | 開關 AI 聊天 |
 | `/settings memory` | Manage Guild | 開關記憶功能 |
 | `/settings prompt` | Manage Guild | 自訂系統指示 |
+| `/settings facts add` | Manage Guild | 新增伺服器共用背景知識 |
+| `/settings facts list` | Manage Guild | 列出伺服器共用背景知識 |
+| `/settings facts remove` | Manage Guild | 刪除伺服器共用背景知識 |
 | `/settings reset` | Manage Guild | 還原伺服器設定 |
 | `/usage` | Manage Guild | 本伺服器用量 |
 
 不使用 slash command 也可以聊天：在 AI 頻道直接說話，或在任何頻道 @Bot。
+
+搜尋、天氣、計算、時間、記憶都**不需要指令** —— 直接用講的，小步會自己決定要不要呼叫工具。
 
 ---
 
@@ -595,6 +703,10 @@ crontab -e
 | 回覆下面出現「改由 Groq 回答」 | 正常的自動換手，代表 Gemini 當下不可用。不想看到就設 `AI_FALLBACK_ENABLED=false`（但額度用完時就直接失敗了） |
 | 選模型時說「需要 Groq 的 API Key」 | 選單列出完整白名單，但那家沒設 Key。補上 `GROQ_API_KEY` 後重啟容器 |
 | 「AI 服務認證失敗」 | API Key 錯誤或已失效，重新產生 |
+| 小步不肯搜尋 | `TAVILY_API_KEY` 與 `GEMINI_API_KEY` 都沒設時搜尋工具不會提供給模型。`/help` 會反映實際狀態 |
+| 天氣查不到某個城市 | Open-Meteo 的地理編碼只認英文／羅馬拼音。直接跟小步說英文城市名（Taipei、Tokyo）|
+| 小步不記得你說過的話 | 確認 `/me memory` 與 `/settings memory` 都是開啟。記憶只在當前伺服器有效，換伺服器是獨立的 |
+| 「我這次沒有整理出回覆」 | 模型繞完 3 輪工具仍沒作答。換個說法，或用 `/me model` 換一個模型 |
 | `unable to open database file` / `SQLITE_CANTOPEN` | 容器 uid 與 `./data` 擁有者不符。執行 `id -u` 與 `id -g`，把結果填進 `.env` 的 `APP_UID` / `APP_GID`，再 `docker compose up -d` |
 | 容器一直 restart | `docker compose logs --tail=50` 看實際錯誤，多半是環境變數沒填 |
 | healthcheck 顯示 unhealthy | Bot 沒連上 Discord。檢查 Token 是否正確、VM 是否有 outbound 網路 |
@@ -616,6 +728,9 @@ docker compose logs -f --tail=100
 - Token 與 API Key 只從環境變數讀取，不寫死在程式裡，也不會出現在 log 或錯誤訊息中
 - 容器以非 root 的 `node` 使用者執行
 - Bot **不執行**任何 shell command 或動態程式碼
+- 計算機是自己寫的遞迴下降解析器，**不使用 `eval` / `new Function`**，有專門的測試驗證程式碼注入會被拒絕
+- 工具參數一律經過 schema 驗證；schema 沒定義的欄位會被丟棄，模型偷塞的東西進不到工具裡
+- 搜尋來源由程式從 API 回應直接組出，不經過模型，避免捏造或改寫網址
 - 跨 Guild、跨 User 的資料隔離由資料庫查詢的 `guild_id` / `user_id` 條件強制，並有測試涵蓋
 - 使用者暱稱在放進 prompt 前會清理，避免 prompt injection 偽造對話結構
 - 回覆時關閉 `@everyone` / `@here` / 角色提及（`allowedMentions`），避免 Bot 被誘導洗版

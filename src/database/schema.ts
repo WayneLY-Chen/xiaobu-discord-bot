@@ -132,6 +132,30 @@ export const memories = sqliteTable(
 );
 
 // ---------------------------------------------------------------------------
+// 伺服器共用背景知識：範圍 = (guild_id)，全伺服器共用（Planning Phase 3）
+//
+// 與 memories 的差別：
+//   memories    (guild_id, user_id)  每人一份，使用者自己說「記住我…」
+//   guild_facts (guild_id)           全伺服器共用，只有 Manage Guild 能增刪
+// 內容由伺服器管理員自行決定並負責。
+// ---------------------------------------------------------------------------
+
+export const guildFacts = sqliteTable(
+  'guild_facts',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    guildId: text('guild_id')
+      .notNull()
+      .references(() => guilds.id, { onDelete: 'cascade' }),
+    content: text('content').notNull(),
+    /** 新增這條的管理員，出事時查得到是誰加的。 */
+    createdBy: text('created_by').notNull(),
+    createdAt: timestamp('created_at'),
+  },
+  (table) => [index('guild_facts_guild_idx').on(table.guildId, table.id)],
+);
+
+// ---------------------------------------------------------------------------
 // 音樂佇列：Phase 5 使用，Phase 1 只建表
 // ---------------------------------------------------------------------------
 
@@ -180,3 +204,4 @@ export type GuildSettingsRow = typeof guildSettings.$inferSelect;
 export type UserSettingsRow = typeof userSettings.$inferSelect;
 export type MessageRow = typeof messages.$inferSelect;
 export type MemoryRow = typeof memories.$inferSelect;
+export type GuildFactRow = typeof guildFacts.$inferSelect;

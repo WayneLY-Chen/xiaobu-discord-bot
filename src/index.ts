@@ -2,6 +2,7 @@ import { Events } from 'discord.js';
 import { ChatService } from './ai/chatService.js';
 import { createProviders } from './ai/providers/registry.js';
 import { AiRouter } from './ai/router.js';
+import { createSearchRouter } from './ai/search/registry.js';
 import { createClient } from './bot/client.js';
 import type { BotContext } from './bot/context.js';
 import { deployCommands } from './bot/deployCommands.js';
@@ -39,6 +40,7 @@ async function main(): Promise<void> {
     logger.warn('只設定了一個 AI provider，額度用完時沒有其他免費服務可以接手。');
   }
 
+  const search = createSearchRouter(env);
   const client = createClient();
 
   const context: BotContext = {
@@ -51,12 +53,14 @@ async function main(): Promise<void> {
       globalLimit: env.RATE_LIMIT_GLOBAL,
     }),
     router,
-    chat: new ChatService(db, router, {
+    chat: new ChatService(db, router, search, {
       botName: 'AI Bot',
       contextMessageLimit: env.CONTEXT_MESSAGE_LIMIT,
       maxInputLength: env.MAX_INPUT_LENGTH,
       maxOutputTokens: env.AI_MAX_OUTPUT_TOKENS,
       timeoutMs: env.AI_TIMEOUT_MS,
+      toolTimeoutMs: env.TOOL_TIMEOUT_MS,
+      timezone: env.TZ,
     }),
   };
 

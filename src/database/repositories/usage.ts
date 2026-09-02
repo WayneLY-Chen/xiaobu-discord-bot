@@ -10,6 +10,8 @@ export interface UsageRecord {
   kind: 'chat' | 'image' | 'search' | 'voice';
   tokensIn?: number;
   tokensOut?: number;
+  /** 這一次對話裡實際觸發了幾次網路搜尋。 */
+  searches?: number;
 }
 
 export function recordUsage(db: Db, record: UsageRecord): void {
@@ -22,6 +24,7 @@ export function recordUsage(db: Db, record: UsageRecord): void {
       kind: record.kind,
       tokensIn: record.tokensIn ?? 0,
       tokensOut: record.tokensOut ?? 0,
+      searches: record.searches ?? 0,
     })
     .run();
 }

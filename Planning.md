@@ -1190,7 +1190,60 @@ Memory
 
 Guild Facts（/settings facts）
 
+Tool Calling（§29）
+
 完成測試。
+
+### 查證結果（2026-09）
+
+**搜尋 —— 採用 Tavily 為主、Gemini grounding 為備援。**
+
+Tavily 免費層每月 1,000 credits、每月 1 號重置、不需要綁信用卡。
+回傳乾淨的原始網址，新聞類查詢還附 published_date，
+符合 §12「顯示 URL、顯示日期」的要求。
+
+Gemini 的 Google Search grounding 每天 500 次免費，額度大 15 倍，
+但只有 gemini-2.5-flash 與 2.5-flash-lite 有這個免費資格，
+3.x 全系列官方標示「Not available」。
+來源是 Google 轉址連結、沒有日期，品質較差，所以當備援。
+
+實作方式是把 grounding 包成一般的搜尋工具（內部固定叫 2.5-flash-lite），
+所以主回答由 Groq 產生時一樣能搜尋，不會被綁在特定模型上。
+
+Brave Search 需要綁信用卡，不符合 $0 前提，排除。
+
+**天氣 —— Open-Meteo。**
+
+免費、不需要 API Key、每天 10,000 次。條款為 non-commercial use。
+
+實測發現它的地理編碼只認英文／羅馬拼音：
+查「台北」回空結果，查「Taipei」才回台北市。
+因此工具描述明確要求模型轉換城市名，查不到時回傳可行動的訊息讓模型重試。
+
+**計算機 —— 自寫遞迴下降解析器。**
+
+依 §28「不要讓 AI 直接執行任意 JavaScript / Shell」，
+絕不使用 eval 或 new Function，只認白名單內的運算子與函式。
+
+### 實作要點
+
+工具最多連續呼叫 3 輪，第 4 輪不提供工具，
+逼模型用手上的資料作答而不是無限繞圈。
+繞完仍未產生文字時回報錯誤，不寫入空的 assistant 訊息污染上下文。
+
+來源清單由程式直接從 API 回應組出，不經過模型（§12 不得捏造來源）。
+
+記憶關閉時，記憶類工具不會提供給模型、注入也停止 ——
+關掉就是真的關掉，不是靠 prompt 拜託模型不要用。
+但 /memory list、delete、clear 仍可使用：
+使用者必須永遠看得到也刪得掉自己的資料。
+
+### 踩到的坑
+
+Gemini 3.x 要求把工具呼叫寫回歷史時附上原本的 thought_signature，
+少了它會回 400 INVALID_ARGUMENT，整個工具流程直接失敗。
+而 thoughtSignature 掛在 Part 上而不是 FunctionCall 上，
+用方便的 response.functionCalls 取不到，必須自己走 candidates[].content.parts。
 
 ### Guild Facts 說明
 

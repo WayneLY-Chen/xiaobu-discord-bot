@@ -1,0 +1,289 @@
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { ChatService } from '../src/ai/chatService.js';
+import { AiRouter } from '../src/ai/router.js';
+import { SearchRouter } from '../src/ai/search/router.js';
+import type { SearchProvider, SearchResult } from '../src/ai/search/types.js';
+import {
+  CHAT_WITH_TOOLS,
+  type ChatProvider,
+  type ChatRequest,
+  type ChatResponse,
+} from '../src/ai/providers/types.js';
+import { resolveSettings } from '../src/config/resolveSettings.js';
+import { createDatabase, type Db } from '../src/database/client.js';
+import { addGuildFact } from '../src/database/repositories/guildFacts.js';
+import { addMemory, listMemories } from '../src/database/repositories/memories.js';
+import { upsertGuild, upsertUser } from '../src/database/repositories/identity.js';
+import {
+  getOrCreateConversation,
+  getRecentMessages,
+} from '../src/database/repositories/conversations.js';
+
+/** 依照腳本逐次回覆，用來驅動多輪工具呼叫。 */
+class ScriptedProvider implements ChatProvider {
+  readonly id = 'gemini' as const;
+  readonly tier = 'free' as const;
+  readonly capabilities = CHAT_WITH_TOOLS;
+  readonly requests: ChatRequest[] = [];
+
+  constructor(private readonly script: Partial<ChatResponse>[]) {}
+
+  async chat(request: ChatRequest): Promise<ChatResponse> {
+    this.requests.push(structuredClone(request));
+
+    const step = this.script[this.requests.length - 1] ?? { text: '沒有腳本了' };
+    return { text: '', tokensIn: 1, tokensOut: 1, ...step };
+  }
+}
+
+const results: SearchResult[] = [
+  { title: '第一筆', url: 'https://a.example', snippet: 'aaa', publishedAt: '2026-09-01' },
+  { title: '第二筆', url: 'https://b.example', snippet: 'bbb' },
+];
+
+const searchProvider: SearchProvider = {
+  id: 'tavily',
+  async search() {
+    return results;
+  },
+};
+
+const settings = resolveSettings(undefined, undefined, {
+  model: 'gemini-3.5-flash',
+  locale: 'zh-TW',
+});
+
+const options = {
+  botName: '小步',
+  contextMessageLimit: 20,
+  maxInputLength: 4000,
+  maxOutputTokens: 1024,
+  timeoutMs: 5000,
+  toolTimeoutMs: 5000,
+  timezone: 'Asia/Taipei',
+};
+
+let db: Db;
+let close: () => void;
+
+function serviceWith(script: Partial<ChatResponse>[], search = new SearchRouter([searchProvider])) {
+  const provider = new ScriptedProvider(script);
+  const service = new ChatService(
+    db,
+    new AiRouter([provider], { allowPaidProviders: false, fallbackEnabled: false }),
+    search,
+    options,
+  );
+  return { provider, service };
+}
+
+function ask(service: ChatService, content: string, userId = 'wayne') {
+  return service.reply(
+    {
+      guildId: 'serverA',
+      guildName: 'Server A',
+      channelId: 'chan1',
+      channelName: 'ai',
+      userId,
+      displayName: userId === 'wayne' ? 'Wayne' : 'Ming',
+      content,
+    },
+    settings,
+  );
+}
+
+beforeEach(() => {
+  const created = createDatabase(':memory:');
+  db = created.db;
+  close = () => created.connection.close();
+
+  upsertGuild(db, 'serverA', 'Server A');
+  upsertUser(db, 'wayne', 'Wayne');
+  upsertUser(db, 'ming', 'Ming');
+});
+
+afterEach(() => close());
+
+describe('工具呼叫迴圈', () => {
+  it('模型要求呼叫工具時執行它，再把結果送回去讓模型作答', async () => {
+    const { provider, service } = serviceWith([
+      { toolCalls: [{ id: 'c1', name: 'calculate', args: { expression: '2+2' } }] },
+      { text: '答案是 4 喔' },
+    ]);
+
+    const answer = await ask(service, '2+2 等於多少');
+
+    expect(answer).toBe('答案是 4 喔');
+    expect(provider.requests).toHaveLength(2);
+
+    // 第二次呼叫的歷史裡要有模型的工具呼叫，以及工具的執行結果
+    const history = provider.requests[1]?.history ?? [];
+    expect(history.at(-2)).toMatchObject({ role: 'model', toolCalls: [{ name: 'calculate' }] });
+    expect(history.at(-1)).toMatchObject({ role: 'tool', toolName: 'calculate' });
+    expect((history.at(-1) as { text: string }).text).toContain('2+2 = 4');
+  });
+
+  it('工具的中間過程不會寫進對話紀錄，只留最終答案', async () => {
+    const { service } = serviceWith([
+      { toolCalls: [{ id: 'c1', name: 'calculate', args: { expression: '2+2' } }] },
+      { text: '答案是 4 喔' },
+    ]);
+
+    await ask(service, '2+2 等於多少');
+
+    const rows = getRecentMessages(db, getOrCreateConversation(db, 'serverA', 'chan1'), 10);
+    expect(rows.map((row) => [row.role, row.content])).toEqual([
+      ['user', '2+2 等於多少'],
+      ['assistant', '答案是 4 喔'],
+    ]);
+  });
+
+  it('搜尋來源附在回覆下方，內容取自 API 而不是模型講的', async () => {
+    const { service } = serviceWith([
+      { toolCalls: [{ id: 'c1', name: 'web_search', args: { query: 'nvidia' } }] },
+      { text: '查到了一些消息' },
+    ]);
+
+    const answer = await ask(service, '查一下 nvidia');
+
+    expect(answer).toContain('**來源**');
+    expect(answer).toContain('<https://a.example>');
+    expect(answer).toContain('<https://b.example>');
+    // API 有給日期就顯示，沒給就不顯示 —— 不會為了湊格式編一個
+    expect(answer).toContain('2026-09-01');
+  });
+
+  it('重複的來源只列一次', async () => {
+    const { service } = serviceWith([
+      {
+        toolCalls: [
+          { id: 'c1', name: 'web_search', args: { query: 'a' } },
+          { id: 'c2', name: 'web_search', args: { query: 'b' } },
+        ],
+      },
+      { text: '好了' },
+    ]);
+
+    const answer = await ask(service, '查兩次');
+
+    expect(answer.match(/https:\/\/a\.example/g)).toHaveLength(1);
+  });
+
+  it('沒有用到搜尋時不會多出來源區塊', async () => {
+    const { service } = serviceWith([{ text: '純聊天' }]);
+
+    expect(await ask(service, '嗨')).toBe('純聊天');
+  });
+
+  it('模型一直要工具時，最後一輪不再給工具，逼它把話講完', async () => {
+    const call = { toolCalls: [{ id: 'c', name: 'calculate', args: { expression: '1+1' } }] };
+    const { provider, service } = serviceWith([call, call, call, { text: '好啦我說' }]);
+
+    const answer = await ask(service, '一直算');
+
+    // 前 3 輪有工具，第 4 輪（MAX_TOOL_ROUNDS）沒有
+    expect(provider.requests[0]?.tools?.length).toBeGreaterThan(0);
+    expect(provider.requests[2]?.tools?.length).toBeGreaterThan(0);
+    expect(provider.requests[3]?.tools).toBeUndefined();
+    expect(answer).toBe('好啦我說');
+  });
+
+  it('繞完所有輪次仍然只吐工具呼叫時，回報錯誤而不是存一則空訊息', async () => {
+    const call = { toolCalls: [{ id: 'c', name: 'calculate', args: { expression: '1+1' } }] };
+    const { service } = serviceWith([call, call, call, call]);
+
+    await expect(ask(service, '一直算')).rejects.toThrow('沒有整理出回覆');
+
+    // 使用者的問題留著，但不能有空的 assistant 回覆污染之後的上下文
+    const rows = getRecentMessages(db, getOrCreateConversation(db, 'serverA', 'chan1'), 10);
+    expect(rows.map((row) => row.role)).toEqual(['user']);
+  });
+
+  it('工具呼叫的 signature 會原封不動帶回歷史 —— Gemini 少了它會回 400', async () => {
+    const { provider, service } = serviceWith([
+      {
+        toolCalls: [
+          { id: 'c1', name: 'calculate', args: { expression: '1+1' }, signature: 'sig-abc' },
+        ],
+      },
+      { text: '2' },
+    ]);
+
+    await ask(service, '算一下');
+
+    const history = provider.requests[1]?.history ?? [];
+    expect(history.at(-2)).toMatchObject({ toolCalls: [{ signature: 'sig-abc' }] });
+  });
+});
+
+describe('記憶與伺服器背景知識', () => {
+  it('remember 工具真的寫進資料庫', async () => {
+    const { service } = serviceWith([
+      { toolCalls: [{ id: 'c1', name: 'remember', args: { content: 'Wayne 喜歡 Qwen' } }] },
+      { text: '記住了' },
+    ]);
+
+    await ask(service, '記住我喜歡 Qwen');
+
+    expect(listMemories(db, 'serverA', 'wayne').map((row) => row.content)).toEqual([
+      'Wayne 喜歡 Qwen',
+    ]);
+  });
+
+  it('已存的記憶會注入 system instruction', async () => {
+    addMemory(db, 'serverA', 'wayne', 'Wayne 喜歡 Qwen');
+    const { provider, service } = serviceWith([{ text: '你喜歡 Qwen' }]);
+
+    await ask(service, '我喜歡什麼');
+
+    expect(provider.requests[0]?.systemInstruction).toContain('Wayne 喜歡 Qwen');
+  });
+
+  it('別人的記憶不會出現在自己的 system instruction', async () => {
+    addMemory(db, 'serverA', 'wayne', 'Wayne 的祕密');
+    const { provider, service } = serviceWith([{ text: '不知道' }]);
+
+    await ask(service, '我喜歡什麼', 'ming');
+
+    expect(provider.requests[0]?.systemInstruction).not.toContain('Wayne 的祕密');
+  });
+
+  it('記憶關閉時既不注入也不提供記憶工具', async () => {
+    addMemory(db, 'serverA', 'wayne', 'Wayne 喜歡 Qwen');
+    const { provider, service } = serviceWith([{ text: '好' }]);
+
+    await service.reply(
+      {
+        guildId: 'serverA',
+        guildName: 'Server A',
+        channelId: 'chan1',
+        channelName: 'ai',
+        userId: 'wayne',
+        displayName: 'Wayne',
+        content: '嗨',
+      },
+      { ...settings, memoryEnabled: false },
+    );
+
+    const request = provider.requests[0];
+    expect(request?.systemInstruction).not.toContain('Wayne 喜歡 Qwen');
+    expect(request?.tools?.map((tool) => tool.name)).not.toContain('remember');
+  });
+
+  it('伺服器背景知識會注入，而且對這個伺服器的每個人都適用', async () => {
+    addGuildFact(db, 'serverA', '週會固定在每週三晚上八點', 'admin');
+    const { provider, service } = serviceWith([{ text: '好' }]);
+
+    await ask(service, '週會什麼時候', 'ming');
+
+    expect(provider.requests[0]?.systemInstruction).toContain('週會固定在每週三晚上八點');
+  });
+
+  it('沒有搜尋來源時，system instruction 不會提供搜尋工具', async () => {
+    const { provider, service } = serviceWith([{ text: '好' }], new SearchRouter([]));
+
+    await ask(service, '嗨');
+
+    expect(provider.requests[0]?.tools?.map((tool) => tool.name)).not.toContain('web_search');
+  });
+});
