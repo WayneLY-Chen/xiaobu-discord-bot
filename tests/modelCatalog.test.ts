@@ -55,7 +55,7 @@ describe('model catalog', () => {
   });
 
   it('isAllowedModel 與 getModelSpec 對得起來', () => {
-    expect(isAllowedModel('llama-3.3-70b-versatile')).toBe(true);
+    expect(isAllowedModel('openai/gpt-oss-120b')).toBe(true);
     expect(isAllowedModel('gpt-4o')).toBe(false);
     expect(getModelSpec('qwen/qwen3.6-27b')?.provider).toBe('groq');
     expect(getModelSpec('不存在的模型')).toBeUndefined();

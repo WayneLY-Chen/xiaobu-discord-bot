@@ -221,19 +221,37 @@ https://discord.com/oauth2/authorize?client_id=你的APPLICATION_ID&permissions=
 | Google Gemini | <https://aistudio.google.com/apikey> | `GEMINI_API_KEY` | 預設主力 |
 | Groq | <https://console.groq.com/keys> | `GROQ_API_KEY` | 備援，也可直接指定 |
 
-### 可用模型（2026-09 查證）
+### 可用模型（2026-09 實測）
 
-| Model | Provider | 狀態 |
-|---|---|---|
-| `gemini-3.1-flash-lite`（預設） | Gemini | production |
-| `gemini-3.5-flash-lite`、`gemini-2.5-flash-lite` | Gemini | production |
-| `gemini-3.5-flash`、`gemini-3.6-flash`、`gemini-3.7-flash`、`gemini-2.5-flash` | Gemini | production |
-| `llama-3.3-70b-versatile` | Groq | production（Groq 換手時的預設） |
-| `llama-3.1-8b-instant` | Groq | production，最快 |
-| `openai/gpt-oss-120b`、`openai/gpt-oss-20b` | Groq | production |
-| `qwen/qwen3.6-27b`、`qwen/qwen3.8-27b` | Groq | ⚠️ preview |
+下表的「實測」欄是拿真實 API Key 逐一呼叫量到的，不是抄文件。
 
-⚠️ Groq 官方把 Qwen 標為 **preview**，寫明「intended for evaluation purposes only」、可能隨時下架。所以它們**不會**被當成預設或換手目標，只有你自己選才會用到。`/settings model` 的選單上也標了出來。
+| Model | Provider | 狀態 | 實測 |
+|---|---|---|---|
+| `gemini-3.1-flash-lite` | Gemini | production | ✅ 約 1 秒　**系統預設** |
+| `gemini-3.5-flash-lite` | Gemini | production | ✅ 約 1 秒 |
+| `gemini-2.5-flash-lite` | Gemini | production | ✅ 約 1 秒 |
+| `gemini-2.5-flash` | Gemini | production | ✅ 3～7 秒 |
+| `gemini-3.5-flash` | Gemini | production | ⚠️ 20～24 秒，明顯偏慢 |
+| `gemini-3.6-flash` | Gemini | production | ⚠️ 6～17 秒，偶爾 503 |
+| `gemini-3.7-flash` | Gemini | production | ⚠️ 測試當下兩次都失敗（503 高負載／逾時） |
+| `openai/gpt-oss-120b` | Groq | production | ✅ 約 1 秒　**Groq 換手時的預設** |
+| `openai/gpt-oss-20b` | Groq | production | ✅ 約 0.5 秒 |
+| `groq/compound` | Groq | production | ✅ 約 1.6 秒，內建網路搜尋 |
+| `groq/compound-mini` | Groq | production | ✅ 約 1.1 秒，內建網路搜尋 |
+| `qwen/qwen3.8-27b` | Groq | ⚠️ preview | ✅ 約 0.5 秒 |
+| `qwen/qwen3.6-27b` | Groq | ⚠️ preview | ✅ 約 1.7 秒，會先思考 |
+
+**新版 Gemini Flash（3.5 / 3.6 / 3.7）在免費層很容易碰到 503「high demand」或逾時。** 這是 Google 端的容量問題，不是設定錯誤 —— 自動換手就是為了這種狀況。想穩定就用 flash-lite 系列。
+
+⚠️ Groq 把 Qwen 標為 **preview**（intended for evaluation purposes only、可能隨時下架），因此**不會**被當成預設或換手目標，只有你自己選才會用到，`/settings model` 選單上也標了出來。
+
+**推理型模型的處理**：`gpt-oss` 與 Qwen 的 thinking 版本會輸出推理過程。有的放在獨立的 `reasoning` 欄位（不會讀到），有的直接夾在內容的 `<think>…</think>` 裡 —— 後者程式會清掉，使用者只看到答案。如果推理把整個 token 預算吃光導致沒有答案，會被判定成「輸出長度不足」而觸發換手，**不會**被誤判成內容被擋（那種是不換手的）。
+
+> ⚠️ **Groq 的說明文件與帳號實際能用的模型不一致。** 文件頁列出的 `llama-3.3-70b-versatile`、`llama-3.1-8b-instant` 實際呼叫回 404「does not exist or you do not have access to it」，`GET /openai/v1/models` 也查不到。上表是用實際 Key 打 `/models` 對出來、再逐一呼叫驗證過的。要加 Groq 模型前請先自己查一次：
+>
+> ```bash
+> curl -s https://api.groq.com/openai/v1/models -H "Authorization: Bearer $GROQ_API_KEY"
+> ```
 
 `gemini-2.5-pro` **未出現**在 Gemini 免費清單中，因此不納入白名單 —— 依規格「不確定就不假設免費」。
 

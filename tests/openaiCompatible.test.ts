@@ -54,7 +54,7 @@ function providerWith(fetchImpl: typeof fetch): OpenAiCompatibleProvider {
 }
 
 const request: ChatRequest = {
-  model: 'llama-3.3-70b-versatile',
+  model: 'openai/gpt-oss-120b',
   systemInstruction: '你是小步',
   history: [
     { role: 'user', text: '[Wayne] 嗨' },
@@ -144,6 +144,35 @@ describe('OpenAiCompatibleProvider', () => {
       fakeFetch(200, { choices: [{ message: { content: '' }, finish_reason: 'content_filter' }] }),
     );
     await expect(provider.chat(request)).rejects.toThrow(ContentBlockedError);
+  });
+
+  it('推理型模型的 <think> 區塊會被清掉，使用者只看到答案', async () => {
+    const provider = providerWith(
+      fakeFetch(200, {
+        choices: [
+          {
+            message: { content: '<think>\n先想一下要怎麼回\n</think>\n\n我是小步！' },
+            finish_reason: 'stop',
+          },
+        ],
+      }),
+    );
+
+    const response = await provider.chat(request);
+    expect(response.text).toBe('我是小步！');
+  });
+
+  it('推理佔滿輸出長度時算長度不足，不是內容被擋 —— 這樣 Router 才會換手', async () => {
+    // Qwen thinking 版本實際會這樣：整個預算都花在 <think> 裡，還沒吐出答案就被截斷
+    const provider = providerWith(
+      fakeFetch(200, {
+        choices: [{ message: { content: '\n<think>\n想很久還沒想完' }, finish_reason: 'length' }],
+      }),
+    );
+
+    await expect(provider.chat(request)).rejects.toThrow(/輸出長度/);
+    // 關鍵：不能是 ContentBlockedError，否則 Router 會直接放棄而不換手
+    await expect(provider.chat(request)).rejects.not.toThrow(ContentBlockedError);
   });
 
   it('回應不是 JSON 時給出友善錯誤，而不是拋出解析例外', async () => {

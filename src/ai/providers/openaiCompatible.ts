@@ -90,11 +90,10 @@ export class OpenAiCompatibleProvider implements ChatProvider {
       }
 
       const choice = payload.choices?.[0];
-      const text = choice?.message?.content?.trim() ?? '';
+      const text = stripReasoning(choice?.message?.content ?? '');
 
       if (text.length === 0) {
-        // 空內容多半是被內容過濾擋下，或 max_tokens 太小導致還沒吐字就停了
-        throw new ContentBlockedError(`finish_reason=${choice?.finish_reason ?? 'unknown'}`);
+        throw explainEmptyResponse(choice?.finish_reason);
       }
 
       return {
@@ -141,4 +140,33 @@ export class OpenAiCompatibleProvider implements ChatProvider {
     logger.error(`${this.options.label} 未分類錯誤`, error);
     return new UserFacingError('AI 服務暫時無法使用，請稍後再試。', error);
   }
+}
+
+/**
+ * 推理型模型（gpt-oss、Qwen 的 thinking 版本）有兩種放推理過程的方式：
+ * 放在獨立的 `reasoning` 欄位，或直接夾在 content 的 <think>…</think> 裡。
+ * 前者我們本來就不會讀到，後者要自己清掉 —— Discord 使用者要的是答案，不是草稿。
+ *
+ * 也處理被截斷、沒有結束標籤的情況：那種內容全是推理，清掉後會是空字串，
+ * 交給 explainEmptyResponse 判斷成長度不足，而不是誤報成內容被擋。
+ */
+export function stripReasoning(content: string): string {
+  return content
+    .replace(/<think>[\s\S]*?<\/think>/gi, '')
+    .replace(/<think>[\s\S]*$/i, '')
+    .trim();
+}
+
+function explainEmptyResponse(finishReason: string | undefined): UserFacingError {
+  // 推理型模型可能把整個 token 預算花在思考上，一個字都還沒吐出來就被截斷。
+  // 這是輸出長度問題，不是內容被擋 —— 必須讓 Router 有機會換手到別家，
+  // 因為 ContentBlockedError 會被 Router 當成「不該重試」而直接往上拋。
+  if (finishReason === 'length') {
+    return new UserFacingError(
+      'AI 這次沒有產生出內容（推理佔滿了輸出長度），請再試一次或換一個模型。',
+      'finish_reason=length',
+    );
+  }
+
+  return new ContentBlockedError(`finish_reason=${finishReason ?? 'unknown'}`);
 }

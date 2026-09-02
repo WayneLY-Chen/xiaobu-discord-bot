@@ -278,6 +278,6 @@ describe('ChatService 換手到備援 provider 時', () => {
 
     const rows = db.select({ provider: usage.provider, model: usage.model }).from(usage).all();
 
-    expect(rows).toEqual([{ provider: 'groq', model: 'llama-3.3-70b-versatile' }]);
+    expect(rows).toEqual([{ provider: 'groq', model: 'openai/gpt-oss-120b' }]);
   });
 });

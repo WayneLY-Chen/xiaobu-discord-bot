@@ -78,7 +78,7 @@ describe('AiRouter', () => {
     const result = await router([gemini, groq]).chat(request);
 
     expect(result.provider).toBe('groq');
-    expect(result.model).toBe('llama-3.3-70b-versatile');
+    expect(result.model).toBe('openai/gpt-oss-120b');
     expect(result.fellBack).toBe(true);
     expect(result.fallbackReason).toBeInstanceOf(QuotaExceededError);
     expect(result.text).toBe('groq 的回覆');
@@ -149,7 +149,7 @@ describe('AiRouter', () => {
     const gemini = new StubProvider('gemini');
 
     // Groq 沒註冊（沒有 GROQ_API_KEY），但資料庫裡還存著使用者之前選的 Groq 模型
-    const result = await router([gemini]).chat({ ...request, model: 'llama-3.3-70b-versatile' });
+    const result = await router([gemini]).chat({ ...request, model: 'openai/gpt-oss-120b' });
 
     expect(result.provider).toBe('gemini');
     expect(result.model).toBe('gemini-3.1-flash-lite');

@@ -35,15 +35,20 @@ export const MODEL_CATALOG = [
   { id: 'gemini-2.5-flash', provider: 'gemini', label: 'Gemini 2.5 Flash', stability: 'production' },
 
   // --- Groq（免費層 30 RPM / 1000 RPD / 200K TPD）---
-  { id: 'llama-3.3-70b-versatile', provider: 'groq', label: 'Groq Llama 3.3 70B', stability: 'production' },
-  { id: 'llama-3.1-8b-instant', provider: 'groq', label: 'Groq Llama 3.1 8B（最快）', stability: 'production' },
+  //
+  // 這份清單是拿實際的 API Key 打 GET /openai/v1/models 對出來的，不是抄文件頁的。
+  // Groq 的說明文件列了 llama-3.3-70b-versatile 之類的模型，但實際呼叫回 404
+  // 「does not exist or you do not have access to it」，/models 也查不到 ——
+  // 文件與帳號實際能用的東西不一致。新增 Groq 模型前請先用自己的 Key 查一次。
   { id: 'openai/gpt-oss-120b', provider: 'groq', label: 'Groq GPT-OSS 120B', stability: 'production' },
-  { id: 'openai/gpt-oss-20b', provider: 'groq', label: 'Groq GPT-OSS 20B', stability: 'production' },
+  { id: 'openai/gpt-oss-20b', provider: 'groq', label: 'Groq GPT-OSS 20B（較快）', stability: 'production' },
+  { id: 'groq/compound', provider: 'groq', label: 'Groq Compound（內建網路搜尋）', stability: 'production' },
+  { id: 'groq/compound-mini', provider: 'groq', label: 'Groq Compound Mini（較快）', stability: 'production' },
 
   // Groq 官方把 Qwen 標為 preview（intended for evaluation purposes only），
   // 可能隨時下架，所以不當預設、也不當 fallback 目標，只讓想用的人自己選。
-  { id: 'qwen/qwen3.6-27b', provider: 'groq', label: 'Groq Qwen3.6 27B（preview，可能下架）', stability: 'preview' },
   { id: 'qwen/qwen3.8-27b', provider: 'groq', label: 'Groq Qwen3.8 27B（preview，可能下架）', stability: 'preview' },
+  { id: 'qwen/qwen3.6-27b', provider: 'groq', label: 'Groq Qwen3.6 27B（preview，思考較久）', stability: 'preview' },
 ] as const satisfies readonly ModelSpec[];
 
 export type AllowedModel = (typeof MODEL_CATALOG)[number]['id'];
@@ -72,7 +77,9 @@ export function getModelSpec(id: string): ModelSpec | undefined {
  */
 export const PROVIDER_DEFAULT_MODEL = {
   gemini: 'gemini-3.1-flash-lite',
-  groq: 'llama-3.3-70b-versatile',
+  // 刻意不用 groq/compound：那是會自己去搜網路的 agentic 系統，
+  // 當備援時行為不好預測。gpt-oss 是單純的聊天模型，content 也乾淨。
+  groq: 'openai/gpt-oss-120b',
 } as const satisfies Record<ProviderId, AllowedModel>;
 
 /** 給錯誤訊息用的中文名稱。 */

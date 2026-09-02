@@ -33,10 +33,10 @@ describe('環境變數驗證', () => {
     const env = loadEnv({
       ...base,
       GROQ_API_KEY: 'q-key',
-      DEFAULT_MODEL: 'llama-3.3-70b-versatile',
+      DEFAULT_MODEL: 'openai/gpt-oss-120b',
     });
 
-    expect(env.DEFAULT_MODEL).toBe('llama-3.3-70b-versatile');
+    expect(env.DEFAULT_MODEL).toBe('openai/gpt-oss-120b');
   });
 
   it('白名單外的模型不接受', () => {
