@@ -1,4 +1,5 @@
 import {
+  AttachmentBuilder,
   ChannelType,
   Events,
   PermissionFlagsBits,
@@ -6,6 +7,7 @@ import {
   type Message,
   type SendableChannels,
 } from 'discord.js';
+import type { ChatReply } from '../ai/chatService.js';
 import type { BotContext } from '../bot/context.js';
 import { resolveSettings } from '../config/resolveSettings.js';
 import { ensureGuildSettings, getUserSettings } from '../database/repositories/settings.js';
@@ -65,7 +67,7 @@ async function handleMessage(message: Message, context: BotContext): Promise<voi
   const stopTyping = startTyping(message.channel);
 
   try {
-    const answer = await context.chat.reply(
+    const reply = await context.chat.reply(
       {
         guildId: message.guildId,
         guildName: message.guild.name,
@@ -78,7 +80,7 @@ async function handleMessage(message: Message, context: BotContext): Promise<voi
       settings,
     );
 
-    await sendChunked(message, answer);
+    await sendChunked(message, reply);
   } catch (error) {
     if (!(error instanceof UserFacingError)) {
       logger.error('AI 回覆失敗', error);
@@ -127,19 +129,41 @@ function startTyping(channel: SendableChannels): () => void {
   return () => clearInterval(timer);
 }
 
-/** 第一段用 reply 讓對話有脈絡，後續段落直接 send，避免洗版式的連續提及。 */
-async function sendChunked(message: Message<true>, text: string): Promise<void> {
-  const chunks = chunkMessage(text);
+/**
+ * 第一段用 reply 讓對話有脈絡，後續段落直接 send，避免洗版式的連續提及。
+ *
+ * 圖片附在**最後一段**：Discord 會把附件顯示在該則訊息下方，
+ * 掛在第一段的話文字被切開時圖會夾在中間，讀起來很怪。
+ */
+async function sendChunked(message: Message<true>, reply: ChatReply): Promise<void> {
+  const files = reply.images.map((image) => new AttachmentBuilder(image.data, { name: image.filename }));
+  const chunks = chunkMessage(reply.text);
   const first = chunks[0];
 
   if (first === undefined) {
+    // 有圖但沒文字時仍然要把圖送出去，不能因為模型沒說話就把圖丟掉
+    if (files.length > 0) {
+      await message.reply({ files, allowedMentions: { repliedUser: true, parse: [] } });
+      return;
+    }
+
     await message.reply('我這次沒有產生出內容，換個說法再問一次看看。');
     return;
   }
 
-  await message.reply({ content: first, allowedMentions: { repliedUser: true, parse: [] } });
+  const rest = chunks.slice(1);
 
-  for (const chunk of chunks.slice(1)) {
-    await message.channel.send({ content: chunk, allowedMentions: { parse: [] } });
+  await message.reply({
+    content: first,
+    ...(rest.length === 0 ? { files } : {}),
+    allowedMentions: { repliedUser: true, parse: [] },
+  });
+
+  for (const [index, chunk] of rest.entries()) {
+    await message.channel.send({
+      content: chunk,
+      ...(index === rest.length - 1 ? { files } : {}),
+      allowedMentions: { parse: [] },
+    });
   }
 }

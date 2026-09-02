@@ -52,6 +52,21 @@ const envSchema = z.object({
   /** 單一工具呼叫的逾時。比 AI_TIMEOUT_MS 短，卡住的工具不該拖垮整輪對話。 */
   TOOL_TIMEOUT_MS: envInt(15_000, 1000),
 
+  // --- 生圖（Phase 4）---
+  /**
+   * Cloudflare Workers AI 生圖。選填 —— 沒設定就只用 Pollinations。
+   * 免費層每天 10,000 neurons，實測 flux-1-schnell 一張 172.80，約 57 張／天。
+   * 兩個都要設定才會啟用。
+   */
+  CLOUDFLARE_ACCOUNT_ID: optionalSecret,
+  CLOUDFLARE_API_TOKEN: optionalSecret,
+  /** 生圖的逾時。生圖比文字慢得多（實測 2.5～4 秒），給的空間也要大一些。 */
+  IMAGE_TIMEOUT_MS: envInt(60_000, 5000),
+  /** 生圖的限流，與一般聊天分開算（規格 §19）。生圖比聊天貴，額度給得比較緊。 */
+  IMAGE_RATE_LIMIT_USER: envInt(3),
+  IMAGE_RATE_LIMIT_GUILD: envInt(10),
+  IMAGE_RATE_LIMIT_GLOBAL: envInt(20),
+
   // --- 對話上下文 ---
   /** 每次送進模型的歷史訊息則數（含 bot 回覆）。 */
   CONTEXT_MESSAGE_LIMIT: envInt(20, 2),

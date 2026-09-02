@@ -1,4 +1,6 @@
 import type { Db } from '../../database/client.js';
+import type { ImageRouter } from '../image/router.js';
+import type { GeneratedImage } from '../image/types.js';
 import type { SearchRouter } from '../search/router.js';
 import type { SearchResult } from '../search/types.js';
 import type { ToolDefinition, ToolParameterSchema } from '../providers/types.js';
@@ -11,9 +13,19 @@ export interface ToolContext {
   locale: string;
   /** 使用者或伺服器關閉記憶時，記憶類工具不會被提供給模型。 */
   memoryEnabled: boolean;
+  /** 伺服器關閉生圖時，生圖工具不會被提供給模型。 */
+  imageEnabled: boolean;
   search: SearchRouter;
+  image: ImageRouter;
   timeoutMs: number;
+  /** 生圖比文字慢得多，用獨立的逾時。 */
+  imageTimeoutMs: number;
   timezone: string;
+  /**
+   * 檢查這位使用者的生圖配額。回傳 null 表示可以生，
+   * 否則回傳要等多久（毫秒）。生圖比聊天貴，所以在一般限流之外另有一層。
+   */
+  checkImageQuota(): { retryAfterMs: number } | null;
 }
 
 export interface ToolResult {
@@ -26,6 +38,13 @@ export interface ToolResult {
    * 「不得捏造來源」，讓模型自己轉述網址就一定會有它改寫或編造的風險。
    */
   sources?: SearchResult[];
+  /**
+   * 要當成 Discord 附件送出的圖片。
+   *
+   * 與 sources 同理：圖片位元組不可能塞進工具的文字回覆裡讓模型轉述，
+   * 所以走這條旁路交給呼叫端，模型只會看到 text 說「圖產好了」。
+   */
+  images?: GeneratedImage[];
 }
 
 export interface Tool {
@@ -35,6 +54,8 @@ export interface Tool {
    * 使用者關掉記憶就是真的關掉，不是「模型自己決定不要用」。
    */
   requiresMemory?: boolean;
+  /** 這個工具是否需要生圖功能。imageEnabled=false 時不會提供給模型。 */
+  requiresImage?: boolean;
   execute(args: Record<string, unknown>, context: ToolContext): Promise<ToolResult>;
 }
 

@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ChatService } from '../src/ai/chatService.js';
+import { TieredRateLimiter } from '../src/utils/rateLimiter.js';
 import { AiRouter } from '../src/ai/router.js';
+import { ImageRouter } from '../src/ai/image/router.js';
+import type { ImageProvider } from '../src/ai/image/types.js';
 import { SearchRouter } from '../src/ai/search/router.js';
 import type { SearchProvider, SearchResult } from '../src/ai/search/types.js';
 import {
@@ -9,7 +12,7 @@ import {
   type ChatRequest,
   type ChatResponse,
 } from '../src/ai/providers/types.js';
-import { resolveSettings } from '../src/config/resolveSettings.js';
+import { resolveSettings, type EffectiveSettings } from '../src/config/resolveSettings.js';
 import { ProviderTimeoutError } from '../src/utils/errors.js';
 import { createDatabase, type Db } from '../src/database/client.js';
 import { addGuildFact } from '../src/database/repositories/guildFacts.js';
@@ -65,24 +68,46 @@ const options = {
   maxOutputTokens: 1024,
   timeoutMs: 5000,
   toolTimeoutMs: 5000,
+  imageTimeoutMs: 5000,
   timezone: 'Asia/Taipei',
 };
 
 let db: Db;
 let close: () => void;
 
-function serviceWith(script: Partial<ChatResponse>[], search = new SearchRouter([searchProvider])) {
+function serviceWith(
+  script: Partial<ChatResponse>[],
+  search = new SearchRouter([searchProvider]),
+  image = new ImageRouter([]),
+  imageLimiter = defaultImageLimiter(),
+) {
   const provider = new ScriptedProvider(script);
   const service = new ChatService(
     db,
     new AiRouter([provider], { allowPaidProviders: false, fallbackEnabled: false }),
     search,
+    image,
+    imageLimiter,
     options,
   );
   return { provider, service };
 }
 
-function ask(service: ChatService, content: string, userId = 'wayne') {
+function defaultImageLimiter(userLimit = 100): TieredRateLimiter {
+  return new TieredRateLimiter({ windowMs: 60_000, userLimit, guildLimit: 1000, globalLimit: 1000 });
+}
+
+/** 大部分測試只在意文字，圖片的斷言另外寫。 */
+async function ask(service: ChatService, content: string, userId = 'wayne') {
+  return (await replyOf(service, content, userId)).text;
+}
+
+function replyOf(
+  service: ChatService,
+  content: string,
+  userId = 'wayne',
+  override: Partial<EffectiveSettings> = {},
+) {
   return service.reply(
     {
       guildId: 'serverA',
@@ -93,7 +118,7 @@ function ask(service: ChatService, content: string, userId = 'wayne') {
       displayName: userId === 'wayne' ? 'Wayne' : 'Ming',
       content,
     },
-    settings,
+    { ...settings, ...override },
   );
 }
 
@@ -357,6 +382,8 @@ describe('換手之後不再回頭試已經掛掉的那家', () => {
       db,
       new AiRouter([dead, live], { allowPaidProviders: false, fallbackEnabled: true }),
       new SearchRouter([searchProvider]),
+      new ImageRouter([]),
+      defaultImageLimiter(),
       options,
     );
 
@@ -382,9 +409,104 @@ describe('換手之後不再回頭試已經掛掉的那家', () => {
         fallbackEnabled: true,
       }),
       new SearchRouter([searchProvider]),
+      new ImageRouter([]),
+      defaultImageLimiter(),
       options,
     );
 
     expect(await ask(service, '現在幾點？')).toContain('改由 Groq 回答');
+  });
+});
+
+
+describe('生圖走的是附件旁路，不是文字', () => {
+  const pixel = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+
+  const fakeImage: ImageProvider = {
+    id: 'fake',
+    tier: 'free',
+    label: 'Fake',
+    generate: async () => ({
+      data: pixel,
+      filename: 'fox.png',
+      provider: 'fake',
+      model: 'fake-1',
+    }),
+  };
+
+  function drawService(script: Partial<ChatResponse>[], userLimit = 100) {
+    return serviceWith(
+      script,
+      new SearchRouter([searchProvider]),
+      new ImageRouter([fakeImage]),
+      defaultImageLimiter(userLimit),
+    );
+  }
+
+  const drawCall = {
+    toolCalls: [{ id: 'i1', name: 'generate_image', args: { prompt: 'a red fox' } }],
+  };
+
+  it('圖片跟著回覆一起交出來，位元組不會混進文字裡', async () => {
+    const { service } = drawService([drawCall, { text: '畫好囉！' }]);
+
+    const reply = await replyOf(service, '幫我畫一隻狐狸', 'wayne', { imageEnabled: true });
+
+    expect(reply.text).toBe('畫好囉！');
+    expect(reply.images).toHaveLength(1);
+    expect(reply.images[0]?.data).toEqual(pixel);
+  });
+
+  it('圖片不會被寫進對話紀錄 —— 那裡只留模型說的話', async () => {
+    const { service } = drawService([drawCall, { text: '畫好囉！' }]);
+
+    await replyOf(service, '幫我畫一隻狐狸', 'wayne', { imageEnabled: true });
+
+    const rows = getRecentMessages(db, getOrCreateConversation(db, 'serverA', 'chan1'), 10);
+    expect(rows.map((row) => row.content)).toEqual(['幫我畫一隻狐狸', '畫好囉！']);
+  });
+
+  it('生圖次數用完後就擋下來，不會再打生圖服務', async () => {
+    const { service } = drawService([drawCall, { text: '畫好囉！' }], 1);
+
+    const first = await replyOf(service, '畫一隻狐狸', 'wayne', { imageEnabled: true });
+    expect(first.images).toHaveLength(1);
+
+    // 第二次同一個人再畫，配額只有 1，應該生不出來
+    const { service: second } = drawService([drawCall, { text: '這次不行' }], 0);
+    const blocked = await replyOf(second, '再畫一隻', 'wayne', { imageEnabled: true });
+
+    expect(blocked.images).toHaveLength(0);
+  });
+
+  it('管理員關掉生圖時，模型連這個工具都拿不到', async () => {
+    const { provider, service } = drawService([{ text: '好' }]);
+
+    await service.reply(
+      {
+        guildId: 'serverA',
+        guildName: 'Server A',
+        channelId: 'chan1',
+        channelName: 'ai',
+        userId: 'wayne',
+        displayName: 'Wayne',
+        content: '畫一隻狐狸',
+      },
+      { ...settings, imageEnabled: false },
+    );
+
+    expect(provider.requests[0]?.tools?.map((tool) => tool.name)).not.toContain('generate_image');
+  });
+
+  it('沒有任何生圖來源時也不提供這個工具', async () => {
+    const { provider, service } = serviceWith(
+      [{ text: '好' }],
+      new SearchRouter([searchProvider]),
+      new ImageRouter([]),
+    );
+
+    await replyOf(service, '畫一隻狐狸', 'wayne', { imageEnabled: true });
+
+    expect(provider.requests[0]?.tools?.map((tool) => tool.name)).not.toContain('generate_image');
   });
 });

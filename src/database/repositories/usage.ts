@@ -12,6 +12,8 @@ export interface UsageRecord {
   tokensOut?: number;
   /** 這一次對話裡實際觸發了幾次網路搜尋。 */
   searches?: number;
+  /** 這一次對話裡實際產生了幾張圖。 */
+  images?: number;
 }
 
 export function recordUsage(db: Db, record: UsageRecord): void {
@@ -25,6 +27,7 @@ export function recordUsage(db: Db, record: UsageRecord): void {
       tokensIn: record.tokensIn ?? 0,
       tokensOut: record.tokensOut ?? 0,
       searches: record.searches ?? 0,
+      images: record.images ?? 0,
     })
     .run();
 }

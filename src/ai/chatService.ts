@@ -15,12 +15,15 @@ import { UserFacingError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
 import { buildChatHistory, sanitizeSpeakerLabel } from './context.js';
 import { buildSystemInstruction } from './prompt.js';
+import type { GeneratedImage } from './image/types.js';
+import type { ImageRouter } from './image/router.js';
 import type { ChatTurn } from './providers/types.js';
 import type { AiRouter } from './router.js';
 import type { SearchRouter } from './search/router.js';
 import type { SearchResult } from './search/types.js';
 import { executeTool, toolsFor } from './tools/registry.js';
 import type { ToolContext } from './tools/types.js';
+import type { TieredRateLimiter } from '../utils/rateLimiter.js';
 
 export interface ChatContext {
   guildId: string;
@@ -33,6 +36,16 @@ export interface ChatContext {
   content: string;
 }
 
+/**
+ * 一次回覆的完整結果。
+ *
+ * 圖片不能塞進文字裡讓模型轉述，所以走獨立欄位交給呼叫端當附件送出。
+ */
+export interface ChatReply {
+  text: string;
+  images: GeneratedImage[];
+}
+
 export interface ChatServiceOptions {
   botName: string;
   contextMessageLimit: number;
@@ -41,6 +54,8 @@ export interface ChatServiceOptions {
   timeoutMs: number;
   /** 單一工具呼叫的逾時，比整體對話短。 */
   toolTimeoutMs: number;
+  /** 生圖的逾時。生圖比文字慢得多，所以獨立設定。 */
+  imageTimeoutMs: number;
   timezone: string;
 }
 
@@ -63,6 +78,9 @@ export class ChatService {
     private readonly db: Db,
     private readonly router: AiRouter,
     private readonly search: SearchRouter,
+    private readonly image: ImageRouter,
+    /** 生圖專用的限流，與一般聊天分開計算（規格 §19）。 */
+    private readonly imageLimiter: TieredRateLimiter,
     private readonly options: ChatServiceOptions,
   ) {
     this.botName = options.botName;
@@ -78,7 +96,12 @@ export class ChatService {
     return this.search.enabled;
   }
 
-  async reply(context: ChatContext, settings: EffectiveSettings): Promise<string> {
+  /** /help 用來決定要不要把生圖列進功能清單。 */
+  get imageEnabled(): boolean {
+    return this.image.enabled;
+  }
+
+  async reply(context: ChatContext, settings: EffectiveSettings): Promise<ChatReply> {
     const conversationId = getOrCreateConversation(this.db, context.guildId, context.channelId);
     const input = context.content.slice(0, this.options.maxInputLength);
 
@@ -91,9 +114,14 @@ export class ChatService {
       userId: context.userId,
       locale: settings.locale,
       memoryEnabled: settings.memoryEnabled,
+      imageEnabled: settings.imageEnabled,
       search: this.search,
+      image: this.image,
       timeoutMs: this.options.toolTimeoutMs,
+      imageTimeoutMs: this.options.imageTimeoutMs,
       timezone: this.options.timezone,
+      // check() 通過就會記帳，所以呼叫這個等於「即將生一張圖」
+      checkImageQuota: () => this.imageLimiter.check(context.guildId, context.userId),
     };
 
     const tools = toolsFor(toolContext);
@@ -125,6 +153,7 @@ export class ChatService {
     );
 
     const sources: SearchResult[] = [];
+    const images: GeneratedImage[] = [];
     let searchCount = 0;
     let tokensIn = 0;
     let tokensOut = 0;
@@ -165,6 +194,7 @@ export class ChatService {
 
         const result = await executeTool(call, toolContext);
         if (result.sources) sources.push(...result.sources);
+        if (result.images) images.push(...result.images);
 
         turns.push({
           role: 'tool',
@@ -202,9 +232,13 @@ export class ChatService {
       tokensIn,
       tokensOut,
       searches: searchCount,
+      images: images.length,
     });
 
-    return answer + formatSources(sources) + formatFallbackNotice(response.provider, everFellBack);
+    return {
+      text: answer + formatSources(sources) + formatFallbackNotice(response.provider, everFellBack),
+      images,
+    };
   }
 }
 

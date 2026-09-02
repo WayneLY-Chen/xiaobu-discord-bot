@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ChatService } from '../src/ai/chatService.js';
+import { TieredRateLimiter } from '../src/utils/rateLimiter.js';
 import { AiRouter } from '../src/ai/router.js';
+import { ImageRouter } from '../src/ai/image/router.js';
 import { SearchRouter } from '../src/ai/search/router.js';
 import {
   CHAT_ONLY,
@@ -76,6 +78,7 @@ const baseOptions = {
   maxOutputTokens: 1024,
   timeoutMs: 5000,
   toolTimeoutMs: 5000,
+  imageTimeoutMs: 5000,
   timezone: 'Asia/Taipei',
 };
 
@@ -94,14 +97,32 @@ beforeEach(() => {
   upsertUser(db, 'user456', 'Ming');
 
   provider = new FakeProvider();
-  service = new ChatService(db, routerFor(provider), noSearch, baseOptions);
+  service = new ChatService(
+    db,
+    routerFor(provider),
+    noSearch,
+    new ImageRouter([]),
+    imageLimiter(),
+    baseOptions,
+  );
 });
 
 afterEach(() => close());
 
+/** 生圖限流開很大，測試不該被它擋到；要測限流的案例自己傳一個小的。 */
+function imageLimiter(userLimit = 100): TieredRateLimiter {
+  return new TieredRateLimiter({
+    windowMs: 60_000,
+    userLimit,
+    guildLimit: 1000,
+    globalLimit: 1000,
+  });
+}
+
+
 describe('ChatService', () => {
   it('回傳模型的回覆，並把兩邊訊息都寫進對話紀錄', async () => {
-    const answer = await service.reply(contextFor('Wayne', '你好', 'user123'), settings);
+    const { text: answer } = await service.reply(contextFor('Wayne', '你好', 'user123'), settings);
 
     expect(answer).toBe('這是回覆');
 
@@ -185,7 +206,7 @@ describe('ChatService', () => {
   });
 
   it('過長的輸入會被截斷，避免一個人吃掉整個 context', async () => {
-    const short = new ChatService(db, routerFor(provider), noSearch, {
+    const short = new ChatService(db, routerFor(provider), noSearch, new ImageRouter([]), imageLimiter(), {
       ...baseOptions,
       maxInputLength: 10,
     });
@@ -252,12 +273,17 @@ describe('ChatService 換手到備援 provider 時', () => {
       db,
       new AiRouter([provider, backup], { allowPaidProviders: false, fallbackEnabled: true }),
       noSearch,
+      new ImageRouter([]),
+      imageLimiter(),
       baseOptions,
     );
   });
 
   it('回覆後面附上提示，讓使用者知道換了服務', async () => {
-    const answer = await fallbackService.reply(contextFor('Wayne', '嗨', 'user123'), settings);
+    const { text: answer } = await fallbackService.reply(
+      contextFor('Wayne', '嗨', 'user123'),
+      settings,
+    );
 
     expect(answer).toContain('備援的回覆');
     expect(answer).toContain('改由 Groq 回答');

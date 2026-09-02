@@ -3,6 +3,7 @@ import { executeTool, toolsFor } from '../src/ai/tools/registry.js';
 import { validateArgs } from '../src/ai/tools/types.js';
 import type { ToolContext } from '../src/ai/tools/types.js';
 import type { ToolParameterSchema } from '../src/ai/providers/types.js';
+import { ImageRouter } from '../src/ai/image/router.js';
 import { SearchRouter } from '../src/ai/search/router.js';
 import { timeTool } from '../src/ai/tools/time.js';
 
@@ -71,8 +72,12 @@ function contextWith(overrides: Partial<ToolContext>): ToolContext {
     userId: 'u1',
     locale: 'zh-TW',
     memoryEnabled: true,
+    imageEnabled: true,
     search: new SearchRouter([]),
+    image: new ImageRouter([]),
     timeoutMs: 1000,
+    imageTimeoutMs: 5000,
+    checkImageQuota: () => null,
     timezone: 'Asia/Taipei',
     ...overrides,
   };

@@ -14,6 +14,7 @@ export const helpCommand: Command = {
 
   async execute(interaction, context) {
     const searchEnabled = context.chat.searchEnabled;
+    const imageEnabled = context.chat.imageEnabled;
 
     const embed = new EmbedBuilder()
       .setTitle('使用說明')
@@ -40,6 +41,9 @@ export const helpCommand: Command = {
             '🧮 **計算機** — 需要精算的數字我會算給你，不用心算',
             '🕐 **時間** — 現在幾點、今天幾號、距離某天還有幾天',
             '🧠 **記憶** — 跟我說「記住…」，我下次還會記得',
+            imageEnabled
+              ? '🎨 **生圖** — 說「畫一張…」我就畫（要管理員先用 `/settings image` 開啟）'
+              : null,
             '',
             '這些不用打指令，直接用講的就好。',
           ]

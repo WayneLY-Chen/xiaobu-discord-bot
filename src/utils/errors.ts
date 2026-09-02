@@ -20,6 +20,19 @@ export class QuotaExceededError extends UserFacingError {
   }
 }
 
+/**
+ * 生圖額度用完。Planning §13 指定了這句話，與文字模型的額度訊息不同，
+ * 所以不能共用 QuotaExceededError 的預設訊息。
+ * 仍然繼承它，讓「這是額度問題」的判斷在各層都成立。
+ */
+export class ImageQuotaExceededError extends QuotaExceededError {
+  constructor(cause?: unknown) {
+    super(cause);
+    this.message = '目前免費生圖額度已用完。';
+    this.name = 'ImageQuotaExceededError';
+  }
+}
+
 export class ProviderTimeoutError extends UserFacingError {
   constructor(cause?: unknown) {
     super('AI 回應逾時，請稍後再試一次。', cause);

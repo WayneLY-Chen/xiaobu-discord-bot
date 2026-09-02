@@ -1,6 +1,7 @@
 import { logger } from '../../utils/logger.js';
 import type { ToolCall, ToolDefinition } from '../providers/types.js';
 import { calculatorTool } from './calculator.js';
+import { imageTool } from './image.js';
 import { forgetTool, rememberTool } from './memory.js';
 import { searchTool } from './search.js';
 import { timeTool } from './time.js';
@@ -14,6 +15,7 @@ const ALL_TOOLS: Tool[] = [
   timeTool,
   rememberTool,
   forgetTool,
+  imageTool,
 ];
 
 const BY_NAME = new Map(ALL_TOOLS.map((tool) => [tool.definition.name, tool]));
@@ -25,9 +27,13 @@ const BY_NAME = new Map(ALL_TOOLS.map((tool) => [tool.definition.name, tool]));
  * 不能只靠 prompt 叫模型「不要用」。搜尋工具沒有可用的搜尋來源時也一樣不提供，
  * 免得模型呼叫了才發現用不了、白白浪費一輪。
  */
-export function toolsFor(context: Pick<ToolContext, 'memoryEnabled' | 'search'>): ToolDefinition[] {
+export function toolsFor(
+  context: Pick<ToolContext, 'memoryEnabled' | 'imageEnabled' | 'search' | 'image'>,
+): ToolDefinition[] {
   return ALL_TOOLS.filter((tool) => {
     if (tool.requiresMemory && !context.memoryEnabled) return false;
+    // 管理員關掉生圖，或根本沒有可用的生圖來源時，都不提供這個工具
+    if (tool.requiresImage && (!context.imageEnabled || !context.image.enabled)) return false;
     if (tool.definition.name === searchTool.definition.name && !context.search.enabled) return false;
     return true;
   }).map((tool) => tool.definition);
@@ -49,6 +55,10 @@ export async function executeTool(call: ToolCall, context: ToolContext): Promise
 
   if (tool.requiresMemory && !context.memoryEnabled) {
     return { text: '記憶功能目前是關閉的，無法使用這個工具。' };
+  }
+
+  if (tool.requiresImage && (!context.imageEnabled || !context.image.enabled)) {
+    return { text: '生圖功能目前是關閉的，無法使用這個工具。' };
   }
 
   try {

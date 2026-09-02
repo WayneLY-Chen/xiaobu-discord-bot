@@ -2,6 +2,7 @@ import { Events } from 'discord.js';
 import { ChatService } from './ai/chatService.js';
 import { createProviders } from './ai/providers/registry.js';
 import { AiRouter } from './ai/router.js';
+import { createImageRouter } from './ai/image/registry.js';
 import { createSearchRouter } from './ai/search/registry.js';
 import { createClient } from './bot/client.js';
 import type { BotContext } from './bot/context.js';
@@ -41,6 +42,7 @@ async function main(): Promise<void> {
   }
 
   const search = createSearchRouter(env);
+  const image = createImageRouter(env);
   const client = createClient();
 
   const context: BotContext = {
@@ -53,15 +55,29 @@ async function main(): Promise<void> {
       globalLimit: env.RATE_LIMIT_GLOBAL,
     }),
     router,
-    chat: new ChatService(db, router, search, {
-      botName: 'AI Bot',
-      contextMessageLimit: env.CONTEXT_MESSAGE_LIMIT,
-      maxInputLength: env.MAX_INPUT_LENGTH,
-      maxOutputTokens: env.AI_MAX_OUTPUT_TOKENS,
-      timeoutMs: env.AI_TIMEOUT_MS,
-      toolTimeoutMs: env.TOOL_TIMEOUT_MS,
-      timezone: env.TZ,
-    }),
+    chat: new ChatService(
+      db,
+      router,
+      search,
+      image,
+      // 生圖與聊天分開限流：一次生圖比一次聊天貴得多，額度也給得比較緊
+      new TieredRateLimiter({
+        windowMs: env.RATE_LIMIT_WINDOW_MS,
+        userLimit: env.IMAGE_RATE_LIMIT_USER,
+        guildLimit: env.IMAGE_RATE_LIMIT_GUILD,
+        globalLimit: env.IMAGE_RATE_LIMIT_GLOBAL,
+      }),
+      {
+        botName: 'AI Bot',
+        contextMessageLimit: env.CONTEXT_MESSAGE_LIMIT,
+        maxInputLength: env.MAX_INPUT_LENGTH,
+        maxOutputTokens: env.AI_MAX_OUTPUT_TOKENS,
+        timeoutMs: env.AI_TIMEOUT_MS,
+        toolTimeoutMs: env.TOOL_TIMEOUT_MS,
+        imageTimeoutMs: env.IMAGE_TIMEOUT_MS,
+        timezone: env.TZ,
+      },
+    ),
   };
 
   registerMessageCreate(client, context);

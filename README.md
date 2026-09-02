@@ -354,6 +354,7 @@ Gemini 的官方文件現在只寫「到 AI Studio 查看你自己的 rate limit
 | `calculate` | 需要精確數值的計算 | 本機（自己寫的求值器） |
 | `get_current_time` | 現在幾點、今天幾號、還有幾天 | 本機 |
 | `remember` / `forget` | 使用者說「記住…」「忘掉…」 | 本機 SQLite |
+| `generate_image` | 使用者說「畫一張…」（要管理員先開啟） | Pollinations → Cloudflare |
 
 工具都有 JSON schema 與參數驗證（規格 §29）。模型給錯參數時會收到說明並自己重試，而不是讓整輪對話失敗。最多連續呼叫 **3 輪**工具，第 4 輪不再提供工具，逼模型用手上的資料把話講完。
 
@@ -387,6 +388,31 @@ Open-Meteo，免費且不需要 API Key，每天 10,000 次、每分鐘 600 次�
 **不使用 `eval` 或 `new Function`**（規格 §28：不要讓 AI 直接執行任意程式碼）。這是自己寫的遞迴下降解析器，只認得數字、四則運算、括號與白名單內的函式。就算模型被誘導產生 `process.exit()`、`require("fs")`、`[].constructor` 之類的字串，也只會得到語法錯誤 —— 測試裡有一組專門驗這件事。
 
 支援 `+ - * / % ^`、全形 `× ÷`、括號、科學記號、底線分隔，以及 `sqrt abs round floor ceil ln log sin cos tan min max pow` 與常數 `pi`、`e`。
+
+### 生圖
+
+規格 §13 要求「用講的」就能生圖，所以做成**工具**而不是斜線指令 —— 由模型自己判斷什麼時候該畫。
+
+**預設關閉**，管理員要用 `/settings image enabled:true` 開啟。它比聊天貴、也比較容易被拿來亂玩，所以不預設開給每個伺服器。
+
+免費來源現況（2026-09 實測，不是看文件）：
+
+| 來源 | 額度 | 綁卡 | 尺寸 | 實測 |
+|---|---|---|---|---|
+| **Pollinations**（主力） | **無每日上限**，但每 15 秒 1 張且綁 IP | ❌ | 三種比例都支援 | 512×512 約 3.4 秒 |
+| **Cloudflare Workers AI**（備援） | 每天 10,000 neurons ≈ **57 張** | ❌ | **只有 1024×1024** | 2.5 秒 |
+
+順序不是品質排序，是**弱點互補**：Pollinations 沒有每日上限但會被短時間節流，Cloudflare 剛好相反。
+
+> ⚠️ Cloudflare 的 `flux-1-schnell` **不接受 `width`/`height`**（送了直接 HTTP 400），固定產出 1024×1024。所以換手到備援時，使用者要的橫幅／直幅會變成方形。因為它是備援不是主力，這個取捨可以接受，但程式碼裡有標明，不假裝支援。
+
+額度計算是從回應的 `cf-ai-neurons` header 讀到的實際值：`tiles × 4.8 + tiles × steps × 9.6`。1024×1024 是 4 個 tile、4 步 = **172.80 neurons**。8 步要 326.40 但品質沒有明顯差別，所以固定用 4 步。
+
+**額度用完不會自動改用付費服務**（規格 §13），會回固定訊息「目前免費生圖額度已用完。」。`ImageRouter` 在建構時就把 `tier === 'paid'` 的來源濾掉，不是靠執行時判斷。
+
+安全性：`safe=true` 是寫死的，**不開放呼叫端關閉**。公開邀請的 Bot 一定會收到成人向的 prompt。
+
+限流：生圖與聊天**分開計算**（規格 §19），預設每人每分鐘 3 張、每伺服器 10 張、全域 20 張。
 
 ### 長期記憶
 
@@ -438,6 +464,12 @@ Open-Meteo，免費且不需要 API Key，每天 10,000 次、每分鐘 600 次�
 | `ALLOW_PAID_PROVIDERS` | `false` | 硬性預設，見上方說明 |
 | `TAVILY_API_KEY` | 空 | 搜尋主力。沒填就只用 Gemini grounding |
 | `TOOL_TIMEOUT_MS` | `15000` | 單一工具呼叫的逾時 |
+| `CLOUDFLARE_ACCOUNT_ID` | 空 | 生圖備援。與 token 兩個都要填才啟用 |
+| `CLOUDFLARE_API_TOKEN` | 空 | 權限只需要 **Workers AI**。建議在 Cloudflare 端限制來源 IP |
+| `IMAGE_TIMEOUT_MS` | `60000` | 生圖逾時。生圖比文字慢得多 |
+| `IMAGE_RATE_LIMIT_USER` | `3` | 每人每分鐘可生成張數 |
+| `IMAGE_RATE_LIMIT_GUILD` | `10` | 每伺服器每分鐘 |
+| `IMAGE_RATE_LIMIT_GLOBAL` | `20` | 全域每分鐘 |
 
 其餘都有合理預設值。啟動時 Zod 會驗證，設定錯誤會直接印出哪一項有問題並結束，不會帶著壞設定半死不活地跑。驗證包含兩條跨欄位規則：至少要有一把 provider Key，而且 `DEFAULT_MODEL` 所屬的 provider 一定要有設定 Key —— 否則每一次對話都得靠 fallback 救援，那是設定錯誤，應該啟動時就講清楚。
 

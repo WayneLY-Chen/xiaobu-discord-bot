@@ -93,6 +93,14 @@ export const settingsCommand: Command = {
     )
     .addSubcommand((sub) =>
       sub
+        .setName('image')
+        .setDescription('開啟或關閉生圖功能（預設關閉）')
+        .addBooleanOption((option) =>
+          option.setName('enabled').setDescription('是否啟用').setRequired(true),
+        ),
+    )
+    .addSubcommand((sub) =>
+      sub
         .setName('prompt')
         .setDescription('自訂系統指示；不填則清除')
         .addStringOption((option) =>
@@ -213,6 +221,18 @@ export const settingsCommand: Command = {
         const enabled = interaction.options.getBoolean('enabled', true);
         updateGuildSettings(db, guildId, { memoryEnabled: enabled });
         await reply(interaction, `記憶功能已${onOff(enabled)}。`);
+        return;
+      }
+
+      case 'image': {
+        const enabled = interaction.options.getBoolean('enabled', true);
+        updateGuildSettings(db, guildId, { imageEnabled: enabled });
+        await reply(
+          interaction,
+          enabled
+            ? '生圖功能已開啟。跟小步說「畫一張…」就會生圖。'
+            : '生圖功能已關閉。',
+        );
         return;
       }
 
@@ -342,6 +362,7 @@ function buildSettingsEmbed(
       },
       { name: 'AI 聊天', value: onOff(guildRow.chatEnabled), inline: true },
       { name: '記憶功能', value: onOff(guildRow.memoryEnabled), inline: true },
+      { name: '生圖功能', value: onOff(guildRow.imageEnabled), inline: true },
       { name: '系統指示', value: systemPrompt },
       {
         name: '對你目前生效的設定',
