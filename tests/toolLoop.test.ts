@@ -13,7 +13,11 @@ import { resolveSettings } from '../src/config/resolveSettings.js';
 import { ProviderTimeoutError } from '../src/utils/errors.js';
 import { createDatabase, type Db } from '../src/database/client.js';
 import { addGuildFact } from '../src/database/repositories/guildFacts.js';
-import { addMemory, listMemories } from '../src/database/repositories/memories.js';
+import {
+  addMemory,
+  listMemories,
+  MAX_MEMORIES_PER_USER,
+} from '../src/database/repositories/memories.js';
 import { upsertGuild, upsertUser } from '../src/database/repositories/identity.js';
 import {
   getOrCreateConversation,
@@ -238,6 +242,20 @@ describe('記憶與伺服器背景知識', () => {
     await ask(service, '我喜歡什麼');
 
     expect(provider.requests[0]?.systemInstruction).toContain('Wayne 喜歡 Qwen');
+  });
+
+  it('存到上限的 50 則會全部注入，沒有存了卻用不到的死資料', async () => {
+    for (let i = 0; i < MAX_MEMORIES_PER_USER; i += 1) {
+      addMemory(db, 'serverA', 'wayne', `第 ${i} 則記憶`);
+    }
+
+    const { provider, service } = serviceWith([{ text: '好' }]);
+    await ask(service, '我跟你說過什麼');
+
+    const instruction = provider.requests[0]?.systemInstruction ?? '';
+    // 最舊的那則也要在 —— 只驗最新幾則的話，注入上限被改小也看不出來
+    expect(instruction).toContain('第 0 則記憶');
+    expect(instruction).toContain(`第 ${MAX_MEMORIES_PER_USER - 1} 則記憶`);
   });
 
   it('別人的記憶不會出現在自己的 system instruction', async () => {

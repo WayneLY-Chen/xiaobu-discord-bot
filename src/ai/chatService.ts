@@ -52,9 +52,6 @@ export interface ChatServiceOptions {
  */
 const MAX_TOOL_ROUNDS = 3;
 
-/** 注入 prompt 的長期記憶則數上限，避免記憶太多把 context 佔滿。 */
-const MAX_INJECTED_MEMORIES = 20;
-
 /**
  * 把「一則 Discord 訊息」變成「一則 AI 回覆」的完整流程。
  * 刻意與 Discord 型別解耦，方便測試也方便之後接語音。
@@ -110,10 +107,12 @@ export class ChatService {
       guildSystemPrompt: settings.systemPrompt,
       userPersonality: settings.personality,
       guildFacts: listGuildFacts(this.db, context.guildId).map((row) => row.content),
+      // 存幾則就注入幾則，不另外設注入上限 ——
+      // 真正的天花板是 MAX_MEMORIES_PER_USER（存的時候就擋住了）。
+      // 這裡再設一個獨立的數字只會讓兩者悄悄長歪：使用者存了 50 則，
+      // 卻只有最新的幾則真的在小步眼前，剩下的變成看得到用不到的死資料。
       memories: settings.memoryEnabled
-        ? listMemories(this.db, context.guildId, context.userId)
-            .slice(0, MAX_INJECTED_MEMORIES)
-            .map((row) => row.content)
+        ? listMemories(this.db, context.guildId, context.userId).map((row) => row.content)
         : [],
       toolsAvailable: tools.length > 0,
     });
