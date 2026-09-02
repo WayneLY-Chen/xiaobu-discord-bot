@@ -364,9 +364,11 @@ Gemini 的官方文件現在只寫「到 AI Studio 查看你自己的 rate limit
 | 來源 | 額度 | 綁卡 | 特點 |
 |---|---|---|---|
 | **Tavily**（預設） | 每月 1,000 次，每月 1 號重置 | ❌ | 乾淨原始網址，新聞查詢附發布日期 |
-| **Gemini grounding**（備援） | 每天 500 次 | ❌ | 額度大 15 倍，但來源是 Google 轉址連結、沒有日期 |
+| **Gemini grounding**（備援） | 每天 1,500 次 | ❌ | 額度大 45 倍，但來源是 Google 轉址連結、沒有日期 |
 
 順序是「品質好的先用，用完換額度大的」。Tavily 額度用盡（HTTP 429/432）會自動換手。
+
+> Gemini grounding 的 1,500 次是從 AI Studio 用量頁實際讀到的數字（`Search grounding　1 / 1.5K`），不是文件上寫的。
 
 > ⚠️ 免費的 Google Search grounding **只有 `gemini-2.5-flash` 與 `gemini-2.5-flash-lite` 有**，Gemini 3.x 全系列都是「Not available」。所以搜尋工具內部固定叫 `gemini-2.5-flash-lite`，跟使用者聊天時選的模型無關 —— 這也表示**主回答由 Groq 產生時一樣能搜尋**。副作用是免費資格綁在舊版模型上，2.5 哪天下架這條備援就沒了，這正是預設用 Tavily 的原因。
 

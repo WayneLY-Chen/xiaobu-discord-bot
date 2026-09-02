@@ -7,6 +7,7 @@ import {
   UserFacingError,
 } from '../../utils/errors.js';
 import { logger } from '../../utils/logger.js';
+import { isDegenerate } from './output.js';
 import {
   CHAT_WITH_TOOLS,
   type ChatProvider,
@@ -25,6 +26,12 @@ export interface OpenAiCompatibleOptions {
   apiKey: string;
   /** 顯示在 log 中的名稱。 */
   label: string;
+  /**
+   * 額外塞進 request body 的欄位，給各家自己的擴充參數用。
+   * 刻意不寫死在這裡 —— 不同的相容端點認得的參數不一樣，
+   * 送出對方不認得的欄位有些家會直接回 400。
+   */
+  extraBody?: Record<string, unknown>;
   /** 測試用；預設使用全域 fetch。 */
   fetchImpl?: typeof fetch;
 }
@@ -93,6 +100,7 @@ export class OpenAiCompatibleProvider implements ChatProvider {
           max_tokens: request.maxOutputTokens,
           stream: false,
           ...(request.tools?.length ? { tools: request.tools.map(toOpenAiTool) } : {}),
+          ...this.options.extraBody,
         }),
         signal: controller.signal,
       });
@@ -110,6 +118,13 @@ export class OpenAiCompatibleProvider implements ChatProvider {
       // 模型決定先呼叫工具時，content 本來就會是空的 —— 那不是被擋下
       if (text.length === 0 && toolCalls.length === 0) {
         throw explainEmptyResponse(choice?.finish_reason);
+      }
+
+      // 陷入重複迴圈的回覆當成這家壞掉，讓 Router 有機會換手，
+      // 而不是把一坨省略號送到使用者面前
+      if (isDegenerate(text)) {
+        logger.warn(`${this.options.label}（${request.model}）產生重複迴圈，已捨棄這次回覆`);
+        throw new UserFacingError('AI 這次的回覆不完整，請再試一次。', 'degenerate output');
       }
 
       return {

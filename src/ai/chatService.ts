@@ -15,7 +15,7 @@ import { UserFacingError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
 import { buildChatHistory, sanitizeSpeakerLabel } from './context.js';
 import { buildSystemInstruction } from './prompt.js';
-import type { ChatResponse, ChatTurn } from './providers/types.js';
+import type { ChatTurn } from './providers/types.js';
 import type { AiRouter } from './router.js';
 import type { SearchRouter } from './search/router.js';
 import type { SearchResult } from './search/types.js';
@@ -128,12 +128,19 @@ export class ChatService {
     let tokensOut = 0;
     let response: Awaited<ReturnType<AiRouter['chat']>> | undefined;
 
+    // 一旦換手成功，後面幾輪就固定用接手的那個模型，不要每輪都再去試已經掛掉的那家。
+    // 否則一次問答會把 AI_TIMEOUT_MS 付好幾遍 —— 實際發生過：問「現在幾點？」
+    // 第二輪又等了 Gemini 整整 60 秒才換手。順帶讓整段工具對話由同一個模型完成，
+    // 它才看得懂自己前面發出的工具呼叫。
+    let activeModel: string = settings.model;
+    let everFellBack = false;
+
     for (let round = 0; round <= MAX_TOOL_ROUNDS; round += 1) {
       // 最後一輪不再給工具，逼模型用已經拿到的資料把話講完，而不是繼續要工具
       const lastRound = round === MAX_TOOL_ROUNDS;
 
       response = await this.router.chat({
-        model: settings.model,
+        model: activeModel,
         systemInstruction,
         history: turns,
         maxOutputTokens: this.options.maxOutputTokens,
@@ -143,6 +150,8 @@ export class ChatService {
 
       tokensIn += response.tokensIn;
       tokensOut += response.tokensOut;
+      everFellBack ||= response.fellBack;
+      activeModel = response.model;
 
       const calls = response.toolCalls ?? [];
       if (calls.length === 0) break;
@@ -193,7 +202,7 @@ export class ChatService {
       searches: searchCount,
     });
 
-    return answer + formatSources(sources) + formatFallbackNotice(response);
+    return answer + formatSources(sources) + formatFallbackNotice(response.provider, everFellBack);
   }
 }
 
@@ -225,11 +234,15 @@ function formatSources(sources: SearchResult[]): string {
   return `\n\n**來源**\n${lines.join('\n')}`;
 }
 
-function formatFallbackNotice(response: ChatResponse & { provider: string; fellBack: boolean }): string {
-  if (!response.fellBack) return '';
+/**
+ * 只要這輪對話中途換過手就要提示 —— 換手後的幾輪 fellBack 會是 false
+ * （因為那時已經直接用接手的模型當第一順位了），不能只看最後一次的結果。
+ */
+function formatFallbackNotice(provider: string, fellBack: boolean): string {
+  if (!fellBack) return '';
 
   // 換了 provider 等於換了模型，回答風格與品質會不一樣，讓使用者知道比較誠實
-  const label = PROVIDER_LABEL[response.provider as keyof typeof PROVIDER_LABEL] ?? response.provider;
+  const label = PROVIDER_LABEL[provider as keyof typeof PROVIDER_LABEL] ?? provider;
   return `\n-# ⚠️ 原本的 AI 服務暫時無法使用，這則改由 ${label} 回答。`;
 }
 

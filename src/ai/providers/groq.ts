@@ -19,6 +19,12 @@ export function createGroqProvider(apiKey: string, fetchImpl?: typeof fetch): Ch
     label: 'Groq',
     baseUrl: GROQ_BASE_URL,
     apiKey,
+    extraBody: {
+      // gpt-oss 系列用的是 Harmony 的 channel 格式，不是 <think> 標籤，
+      // 所以 stripReasoning() 清不掉 —— 推理過程會原封不動混進 content。
+      // 直接叫 Groq 別回傳推理內容，比在客戶端猜格式再清可靠。
+      reasoning_format: 'hidden',
+    },
     ...(fetchImpl ? { fetchImpl } : {}),
   });
 }

@@ -10,6 +10,7 @@ import {
   type ChatResponse,
 } from '../src/ai/providers/types.js';
 import { resolveSettings } from '../src/config/resolveSettings.js';
+import { ProviderTimeoutError } from '../src/utils/errors.js';
 import { createDatabase, type Db } from '../src/database/client.js';
 import { addGuildFact } from '../src/database/repositories/guildFacts.js';
 import { addMemory, listMemories } from '../src/database/repositories/memories.js';
@@ -285,5 +286,77 @@ describe('記憶與伺服器背景知識', () => {
     await ask(service, '嗨');
 
     expect(provider.requests[0]?.tools?.map((tool) => tool.name)).not.toContain('web_search');
+  });
+});
+
+describe('換手之後不再回頭試已經掛掉的那家', () => {
+  /** 第一家每次都逾時，第二家正常。用來確認第二輪不會又去等第一家。 */
+  class DeadProvider implements ChatProvider {
+    readonly id = 'gemini' as const;
+    readonly tier = 'free' as const;
+    readonly capabilities = CHAT_WITH_TOOLS;
+    calls = 0;
+
+    async chat(): Promise<ChatResponse> {
+      this.calls += 1;
+      throw new ProviderTimeoutError('逾時');
+    }
+  }
+
+  class LiveProvider implements ChatProvider {
+    readonly id = 'groq' as const;
+    readonly tier = 'free' as const;
+    readonly capabilities = CHAT_WITH_TOOLS;
+    readonly requests: ChatRequest[] = [];
+
+    constructor(private readonly script: Partial<ChatResponse>[]) {}
+
+    async chat(request: ChatRequest): Promise<ChatResponse> {
+      this.requests.push(structuredClone(request));
+      const step = this.script[this.requests.length - 1] ?? { text: '沒有腳本了' };
+      return { text: '', tokensIn: 1, tokensOut: 1, ...step };
+    }
+  }
+
+  it('第一輪換手後，第二輪直接用接手的模型，不再付一次逾時', async () => {
+    const dead = new DeadProvider();
+    const live = new LiveProvider([
+      { toolCalls: [{ id: 'c1', name: 'get_current_time', args: {} }] },
+      { text: '現在是晚上十點' },
+    ]);
+
+    const service = new ChatService(
+      db,
+      new AiRouter([dead, live], { allowPaidProviders: false, fallbackEnabled: true }),
+      new SearchRouter([searchProvider]),
+      options,
+    );
+
+    const answer = await ask(service, '現在幾點？');
+
+    expect(answer).toContain('現在是晚上十點');
+    // 掛掉的那家只被試了一次，不是每一輪都試
+    expect(dead.calls).toBe(1);
+    expect(live.requests).toHaveLength(2);
+    expect(live.requests[1]?.model).toBe('openai/gpt-oss-120b');
+  });
+
+  it('中途換過手就會附上提示，即使最後一輪本身沒有換手', async () => {
+    const live = new LiveProvider([
+      { toolCalls: [{ id: 'c1', name: 'get_current_time', args: {} }] },
+      { text: '現在是晚上十點' },
+    ]);
+
+    const service = new ChatService(
+      db,
+      new AiRouter([new DeadProvider(), live], {
+        allowPaidProviders: false,
+        fallbackEnabled: true,
+      }),
+      new SearchRouter([searchProvider]),
+      options,
+    );
+
+    expect(await ask(service, '現在幾點？')).toContain('改由 Groq 回答');
   });
 });

@@ -36,7 +36,11 @@ const envSchema = z.object({
   ALLOW_PAID_PROVIDERS: envBoolean(false),
   /** 主要 provider 掛掉時，是否自動改用其他**免費** provider 回答。 */
   AI_FALLBACK_ENABLED: envBoolean(true),
-  AI_TIMEOUT_MS: envInt(60_000, 1000),
+  /**
+   * 一次 API 呼叫的逾時。刻意不設太長：工具呼叫一輪問答會打好幾次 API，
+   * 逾時開太久會讓「掛掉的那家」把整段對話拖住。實測 flash-lite 正常在 2~4 秒回覆。
+   */
+  AI_TIMEOUT_MS: envInt(25_000, 1000),
   AI_MAX_OUTPUT_TOKENS: envInt(2048, 64),
 
   // --- 工具（Phase 3）---

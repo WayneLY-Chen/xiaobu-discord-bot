@@ -1,4 +1,5 @@
 import {
+  FinishReason,
   GoogleGenAI,
   Type,
   type Content,
@@ -14,6 +15,7 @@ import {
   UserFacingError,
 } from '../../utils/errors.js';
 import { logger } from '../../utils/logger.js';
+import { isDegenerate } from './output.js';
 import {
   CHAT_WITH_TOOLS,
   type ChatProvider,
@@ -59,9 +61,25 @@ export class GeminiClient implements ChatProvider {
 
       // 模型決定先呼叫工具時，text 本來就會是空的 —— 那不是被擋下
       if (text.length === 0 && toolCalls.length === 0) {
-        throw new ContentBlockedError(
-          `finishReason=${response.candidates?.[0]?.finishReason ?? 'unknown'}`,
-        );
+        const finishReason = response.candidates?.[0]?.finishReason;
+
+        // 3.x 的 thinking 可能把整個輸出預算花在思考上，一個字都還沒吐出來就被截斷。
+        // 那是長度問題不是內容被擋 —— 必須讓 Router 有機會換手，
+        // 因為 ContentBlockedError 會被 Router 當成「不該重試」直接往上拋。
+        if (finishReason === FinishReason.MAX_TOKENS) {
+          throw new UserFacingError(
+            'AI 這次沒有產生出內容（推理佔滿了輸出長度），請再試一次或換一個模型。',
+            'finishReason=MAX_TOKENS',
+          );
+        }
+
+        throw new ContentBlockedError(`finishReason=${finishReason ?? 'unknown'}`);
+      }
+
+      // 陷入重複迴圈的回覆當成這家壞掉，讓 Router 有機會換手
+      if (isDegenerate(text)) {
+        logger.warn(`Gemini（${request.model}）產生重複迴圈，已捨棄這次回覆`);
+        throw new UserFacingError('AI 這次的回覆不完整，請再試一次。', 'degenerate output');
       }
 
       return {

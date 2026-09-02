@@ -207,3 +207,35 @@ describe('OpenAiCompatibleProvider', () => {
     );
   });
 });
+
+describe('壞掉的回覆與各家擴充參數', () => {
+  it('陷入重複迴圈的回覆被當成故障，而不是送到使用者面前', async () => {
+    const garbage = `現在是台北時間 22:22~?${'\n\n...\n\n…\n\n......\n\n'.repeat(90)}抱歉啦！`;
+    const provider = providerWith(
+      fakeFetch(200, {
+        choices: [{ message: { content: garbage }, finish_reason: 'stop' }],
+      }),
+    );
+
+    // 不是 ContentBlockedError —— 那會讓 Router 直接放棄，不給換手的機會
+    await expect(provider.chat(request)).rejects.toThrow(UserFacingError);
+    await expect(provider.chat(request)).rejects.not.toThrow(ContentBlockedError);
+  });
+
+  it('extraBody 會原封不動送進 request body', async () => {
+    captured.length = 0;
+    const provider = new OpenAiCompatibleProvider({
+      id: 'groq',
+      tier: 'free',
+      label: 'Groq',
+      baseUrl: 'https://api.example.test/v1',
+      apiKey: 'test-key',
+      extraBody: { reasoning_format: 'hidden' },
+      fetchImpl: fakeFetch(200, { choices: [{ message: { content: '嗨' } }] }),
+    });
+
+    await provider.chat(request);
+
+    expect(captured[0]?.body).toMatchObject({ reasoning_format: 'hidden' });
+  });
+});
