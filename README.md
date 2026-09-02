@@ -12,7 +12,7 @@
 
 小步是一個 18 歲女生設定的聊天夥伴。在多人頻道中她分得出誰是誰，不會把大家的話混在一起 —— 這是本專案在架構上最花心思的地方，詳見[說話者識別怎麼運作](#說話者識別怎麼運作)。
 
-> **目前進度：Phase 3 已完成。** 聊天、多伺服器隔離、多 AI Provider 與自動換手、網路搜尋、天氣、計算機、長期記憶、伺服器背景知識都可實際使用。生圖、音樂、語音尚未實作 —— 詳見下方「功能狀態」。
+> **目前進度：Phase 4 已完成。** 聊天、多伺服器隔離、多 AI Provider 與自動換手、網路搜尋、天氣、計算機、長期記憶、伺服器背景知識、AI 生圖都可實際使用。語音尚未實作，YouTube 音樂已決定不做 —— 詳見下方「功能狀態」。
 
 ---
 
@@ -80,15 +80,26 @@
 
 以下功能在 `Planning.md` 中規劃，但**目前完全不能用**，不要對使用者宣稱有這些功能：
 
-| 功能 | 排定階段 |
+| 功能 | 狀態 |
 |---|---|
-| AI 生圖 | Phase 4 |
-| YouTube 音樂播放 | Phase 5 |
-| 語音、STT、TTS | Phase 6 |
+| 語音、STT、TTS | Phase 6，尚未開始 |
+| YouTube 音樂播放 | **已決定不做**，見下方 |
 
-資料庫已建好 `music_queues` 資料表，`/settings` 也保留了 image / music / voice 開關欄位，但**打開這些開關目前不會有任何效果**。
+資料庫建好的 `music_queues` 資料表與 `/settings` 的 music / voice 開關欄位目前**打開不會有任何效果**。
 
-> ⚠️ 音樂（Phase 5）與語音（Phase 6）在這個規格的機器上不一定做得起來 —— YouTube 條款與機房 IP 封鎖是主要障礙，不是程式問題。到那個階段會實測後再決定，詳見 `Planning.md`。
+### 為什麼不做 YouTube 音樂
+
+原本規劃在 Phase 5。實測後**技術上完全可行** —— 從 Oracle 機房 IP 抓 YouTube 沒有被擋，而且 YouTube 直接提供 Opus 128k、正好是 Discord 語音用的編碼，可以原封不動轉發、幾乎不耗 CPU。
+
+（先前這裡寫「機房 IP 封鎖是主要障礙」是錯的，實測推翻了這個假設。）
+
+**真正的原因是條款。** YouTube ToS 有三條明文禁止這種用法，其中一條直接點名 bot：
+
+> 「access the Service using any automated tools (such as **bots**, botnets or web crawlers)」
+
+而且有前例：2021 年 Google 對 **Groovy**（1,600 萬伺服器）與 **Rythm**（約 2,000 萬）發出 cease and desist，兩個都在一個月內關站。Google 列出的理由是「modifying the service」與「using it for commercial purposes」。
+
+小步是公開邀請、以長期營運為目標的 Bot，不想把整個專案建立在隨時可能收到一封信就得拔掉的功能上，所以直接放棄，而不是先做了再說。
 
 ---
 
