@@ -67,6 +67,25 @@ const envSchema = z.object({
   IMAGE_RATE_LIMIT_GUILD: envInt(10),
   IMAGE_RATE_LIMIT_GLOBAL: envInt(20),
 
+  // --- 語音（Phase 6）---
+  /**
+   * Piper 的執行檔與模型。預設路徑對應 Docker image 裡的位置；
+   * 本機開發時把它們放到別處的話用環境變數覆寫。
+   * 檔案不存在時語音功能會停用，但文字聊天完全不受影響。
+   */
+  PIPER_BINARY_PATH: z.string().default('/opt/piper/piper'),
+  PIPER_MODEL_PATH: z.string().default('/opt/piper/zh_CN-huayan-medium.onnx'),
+  /** 語音合成逾時。RTF 約 0.62，600 字上限大約要 40 秒。 */
+  TTS_TIMEOUT_MS: envInt(60_000, 5000),
+  /** 語音辨識逾時。實測 3.5 秒的語音約 0.5 秒回覆。 */
+  STT_TIMEOUT_MS: envInt(20_000, 1000),
+  /** 一段發言講多久之後強制切斷送去辨識，避免有人講不停把記憶體吃光。 */
+  VOICE_MAX_UTTERANCE_MS: envInt(30_000, 3000),
+  /** 靜音多久算一句話講完。太短會把句中的停頓切斷。 */
+  VOICE_SILENCE_MS: envInt(1000, 200),
+  /** 同時可以有幾個伺服器在使用語音。Piper 一次只跑得動一路，所以預設 1。 */
+  VOICE_MAX_SESSIONS: envInt(1, 1),
+
   // --- 對話上下文 ---
   /** 每次送進模型的歷史訊息則數（含 bot 回覆）。 */
   CONTEXT_MESSAGE_LIMIT: envInt(20, 2),

@@ -5,6 +5,7 @@ import { memoryCommand } from './memory.js';
 import { resetCommand } from './reset.js';
 import { settingsCommand } from './settings.js';
 import { usageCommand } from './usage.js';
+import { voiceCommand } from './voice.js';
 
 export const commands: Command[] = [
   helpCommand,
@@ -13,6 +14,7 @@ export const commands: Command[] = [
   memoryCommand,
   resetCommand,
   usageCommand,
+  voiceCommand,
 ];
 
 export const commandsByName = new Map(commands.map((command) => [command.data.name, command]));

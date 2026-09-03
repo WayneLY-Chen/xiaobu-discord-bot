@@ -18,6 +18,12 @@ import { registerInteractionCreate } from './events/interactionCreate.js';
 import { registerMessageCreate } from './events/messageCreate.js';
 import { logger, setLogLevel } from './utils/logger.js';
 import { TieredRateLimiter } from './utils/rateLimiter.js';
+import { createTtsRouter } from './voice/registry.js';
+import { VoiceManager } from './voice/manager.js';
+import { GroqWhisperStt } from './voice/stt.js';
+import { resolveSettings } from './config/resolveSettings.js';
+import { getUserSettings } from './database/repositories/settings.js';
+import { upsertUser } from './database/repositories/identity.js';
 
 /** 定期清掉 rate limiter 裡過期的 key，避免長時間執行後記憶體堆積。 */
 const RATE_LIMIT_PRUNE_INTERVAL_MS = 5 * 60 * 1000;
@@ -80,6 +86,10 @@ async function main(): Promise<void> {
     ),
   };
 
+  // 語音需要三個條件同時成立：Piper 模型在、Groq key 有設定（Whisper 用它）、
+  // 而且真的建得起來。少一個就整個關閉，文字聊天完全不受影響。
+  context.voice = await createVoiceManager();
+
   registerMessageCreate(client, context);
   registerInteractionCreate(client, context);
   registerGuildLifecycle(client, context);
@@ -103,6 +113,72 @@ async function main(): Promise<void> {
       );
     })().catch((error) => logger.error('啟動後初始化失敗', error));
   });
+
+  /**
+   * 語音的 AI 回覆走的是與文字完全相同的 ChatService ——
+   * 記憶、工具、伺服器設定、用量統計全部共用，不另外開一套。
+   * 對話串用**語音頻道的 ID**，所以語音的上下文與文字頻道是分開的。
+   */
+  async function createVoiceManager(): Promise<VoiceManager | undefined> {
+    if (!env.GROQ_API_KEY) {
+      logger.warn('沒有設定 GROQ_API_KEY（語音辨識需要），語音功能停用。');
+      return undefined;
+    }
+
+    const tts = await createTtsRouter(env);
+    if ((await tts.ready()).length === 0) return undefined;
+
+    return new VoiceManager(
+      {
+        tts,
+        stt: new GroqWhisperStt(env.GROQ_API_KEY),
+        ttsTimeoutMs: env.TTS_TIMEOUT_MS,
+        sttTimeoutMs: env.STT_TIMEOUT_MS,
+        silenceMs: env.VOICE_SILENCE_MS,
+        maxUtteranceMs: env.VOICE_MAX_UTTERANCE_MS,
+        respond: async (where, text) => {
+          const guild = client.guilds.cache.get(where.guildId);
+          const channel = guild?.channels.cache.get(where.channelId);
+          if (!guild || !channel) return '';
+
+          const member = await guild.members.fetch(where.userId).catch(() => null);
+          const displayName = member?.displayName ?? '某位使用者';
+
+          upsertGuild(db, guild.id, guild.name);
+          upsertUser(db, where.userId, member?.user.username ?? where.userId);
+
+          const settings = resolveSettings(
+            ensureGuildSettings(db, guild.id),
+            getUserSettings(db, where.userId),
+            { model: env.DEFAULT_MODEL, locale: 'zh-TW' },
+          );
+
+          if (!settings.chatEnabled) return '';
+
+          const denial = context.rateLimiter.check(guild.id, where.userId);
+          if (denial) return '你講太快了，讓我喘口氣。';
+
+          const reply = await context.chat.reply(
+            {
+              guildId: guild.id,
+              guildName: guild.name,
+              channelId: where.channelId,
+              channelName: channel.name,
+              userId: where.userId,
+              displayName,
+              content: text,
+            },
+            settings,
+          );
+
+          // 語音只唸模型講的話 —— 來源清單與換手提示在語音裡唸出來很吵，
+          // 而且網址根本聽不懂
+          return stripForSpeech(reply.text);
+        },
+      },
+      env.VOICE_MAX_SESSIONS,
+    );
+  }
 
   client.on(Events.Error, (error) => logger.error('Discord client 錯誤', error));
   client.on(Events.Warn, (message) => logger.warn(`Discord client 警告：${message}`));
@@ -138,6 +214,9 @@ async function main(): Promise<void> {
 
     logger.info(`收到 ${signal}，準備關閉…`);
     clearInterval(pruneTimer);
+    // 語音連線與底下的 piper / ffmpeg 子行程要先收掉，
+    // 否則 client 斷線後它們會變成孤兒行程繼續佔記憶體
+    context.voice?.destroyAll();
     healthServer.close();
     await client.destroy();
     closeDatabase();
@@ -153,3 +232,15 @@ main().catch((error) => {
   logger.error('啟動失敗', error instanceof Error ? error.message : error);
   process.exit(1);
 });
+
+/**
+ * 把只適合用看的東西拿掉再唸出來：來源清單裡的網址唸出來沒有意義，
+ * 換手提示也只是噪音。兩者都是附加在模型回覆後面的，切掉即可。
+ */
+function stripForSpeech(text: string): string {
+  const sourceAt = text.indexOf('**來源**');
+  const trimmed = sourceAt >= 0 ? text.slice(0, sourceAt) : text;
+
+  const noticeAt = trimmed.indexOf('-# ⚠️');
+  return (noticeAt >= 0 ? trimmed.slice(0, noticeAt) : trimmed).trim();
+}
