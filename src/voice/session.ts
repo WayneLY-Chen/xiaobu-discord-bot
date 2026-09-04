@@ -140,6 +140,10 @@ export class VoiceSession {
         ...input,
         '-c:a', 'libopus', '-b:a', '64k',
         '-ar', String(DISCORD_SAMPLE_RATE), '-ac', String(DISCORD_CHANNELS),
+        // Ogg 預設一頁裝 1 秒音訊，湊滿才吐 —— 那 1 秒是每句話都要付的延遲。
+        // 改成 20ms 一頁並強制 flush，VM 實測第一包從 1038ms 降到 390ms。
+        // 代價是頁首變多、輸出大約多 18%，那是頻寬不是 CPU。
+        '-page_duration', '20000', '-flush_packets', '1',
         '-f', 'ogg', 'pipe:1',
       ],
       { stdio: ['pipe', 'pipe', 'pipe'] },
