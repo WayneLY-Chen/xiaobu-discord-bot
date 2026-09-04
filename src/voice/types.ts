@@ -6,16 +6,25 @@ export interface SpeechRequest {
   timeoutMs: number;
 }
 
+/** 一次最多合成多少字。太長的回覆在語音頻道裡本來就不該整段唸完。 */
+export const MAX_SPEECH_LENGTH = 600;
+
 /**
  * 合成結果刻意是**串流**而不是完整的 Buffer。
  *
- * Piper 支援邊合成邊輸出（--output_raw），一段長回覆可以在第一個字產生時
- * 就開始播，而不是等整段做完。以 RTF 0.62 計算，一段 30 秒的回覆
- * 若要等全部合成完會先靜默 18 秒 —— 那在語音頻道裡是不能接受的。
+ * 兩家來源都能邊合成邊吐，一段長回覆可以在第一個字產生時就開始播，
+ * 而不是等整段做完。等全部合成完的話，一段 30 秒的回覆會先靜默好幾秒 ——
+ * 那在語音頻道裡是不能接受的。
  */
 export interface SynthesizedSpeech {
-  /** 原始 PCM（s16le, mono），取樣率見 sampleRate。 */
-  pcm: Readable;
+  /** 音訊串流，實際編碼見 format。 */
+  audio: Readable;
+  /**
+   * 音訊格式。ffmpeg 的輸入參數要照這個決定 ——
+   * 裸 PCM 必須明講取樣率與聲道數，MP3 自帶標頭不用。
+   */
+  format: 'pcm-s16le' | 'mp3';
+  /** 取樣率。format 是 mp3 時僅供參考，ffmpeg 自己讀得出來。 */
   sampleRate: number;
   provider: string;
   voice: string;

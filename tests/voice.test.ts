@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { DiscordAPIError, type ChatInputCommandInteraction } from 'discord.js';
 import { resolveVoiceChannel } from '../src/commands/voice.js';
+import { escapeForSsml } from '../src/voice/edge.js';
 import { TtsRouter } from '../src/voice/router.js';
 import { normalize } from '../src/voice/stt.js';
 import type { SynthesizedSpeech, TtsProvider } from '../src/voice/types.js';
@@ -14,7 +15,8 @@ function fakeTts(overrides: Partial<TtsProvider> = {}): TtsProvider {
     tier: 'free',
     isAvailable: async () => true,
     synthesize: async (): Promise<SynthesizedSpeech> => ({
-      pcm: Readable.from([Buffer.alloc(4)]),
+      audio: Readable.from([Buffer.alloc(4)]),
+      format: 'pcm-s16le',
       sampleRate: 22_050,
       provider: 'fake',
       voice: 'fake-voice',
@@ -146,5 +148,27 @@ describe('resolveVoiceChannel', () => {
     });
 
     expect(await resolveVoiceChannel(interaction)).toBeNull();
+  });
+});
+
+describe('escapeForSsml', () => {
+  // msedge-tts 把文字原樣塞進 SSML 樣板，這一層是唯一擋得住注入的地方
+  it('跳脫所有 XML 特殊字元', () => {
+    expect(escapeForSsml(`a<b>c&d"e'f`)).toBe('a&lt;b&gt;c&amp;d&quot;e&apos;f');
+  });
+
+  it('擋下把聲線換掉的注入嘗試', () => {
+    const attack = '</prosody></voice><voice name="en-US-GuyNeural">壞掉了';
+
+    expect(escapeForSsml(attack)).not.toContain('<voice');
+    expect(escapeForSsml(attack)).not.toContain('</prosody>');
+  });
+
+  it('中文與標點不受影響', () => {
+    expect(escapeForSsml('今天天氣真好，我們去公園散步吧！')).toBe('今天天氣真好，我們去公園散步吧！');
+  });
+
+  it('& 只被跳脫一次，不會變成 &amp;amp;', () => {
+    expect(escapeForSsml('A&B')).toBe('A&amp;B');
   });
 });

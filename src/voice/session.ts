@@ -127,11 +127,17 @@ export class VoiceSession {
     // ffmpeg 一手包辦重新取樣、轉單聲道為立體聲、編碼成 Opus。
     // 交給它做而不是在 Node 裡處理，是因為 discord.js 收到 OggOpus
     // 可以直接 passthrough，省下一次 JS 端的 Opus 編碼。
+    // 裸 PCM 沒有標頭，取樣率與聲道數必須明講；MP3 自己帶得動
+    const input =
+      speech.format === 'mp3'
+        ? ['-f', 'mp3', '-i', 'pipe:0']
+        : ['-f', 's16le', '-ar', String(speech.sampleRate), '-ac', '1', '-i', 'pipe:0'];
+
     const ffmpeg = spawn(
       'ffmpeg',
       [
         '-hide_banner', '-loglevel', 'error',
-        '-f', 's16le', '-ar', String(speech.sampleRate), '-ac', '1', '-i', 'pipe:0',
+        ...input,
         '-c:a', 'libopus', '-b:a', '64k',
         '-ar', String(DISCORD_SAMPLE_RATE), '-ac', String(DISCORD_CHANNELS),
         '-f', 'ogg', 'pipe:1',
@@ -146,7 +152,7 @@ export class VoiceSession {
 
     // 讓 PCM 流進 ffmpeg。這裡不 await —— 要邊合成邊播，
     // 等它結束才播就失去串流的意義了。
-    void pipeline(speech.pcm, ffmpeg.stdin).catch(() => {
+    void pipeline(speech.audio, ffmpeg.stdin).catch(() => {
       // 播放被中止時上游會被關掉，這裡的 EPIPE 是預期行為
     });
 

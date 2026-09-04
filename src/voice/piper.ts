@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { access, constants } from 'node:fs/promises';
 import { logger } from '../utils/logger.js';
 import { UserFacingError } from '../utils/errors.js';
-import type { SpeechRequest, SynthesizedSpeech, TtsProvider } from './types.js';
+import { MAX_SPEECH_LENGTH, type SpeechRequest, type SynthesizedSpeech, type TtsProvider } from './types.js';
 
 export interface PiperOptions {
   /** piper 執行檔路徑。 */
@@ -14,9 +14,6 @@ export interface PiperOptions {
   voice: string;
 }
 
-/** 一次最多合成多少字。太長的回覆在語音頻道裡本來就不該整段唸完。 */
-const MAX_TEXT_LENGTH = 600;
-
 /**
  * 本機 Piper TTS。
  *
@@ -24,12 +21,14 @@ const MAX_TEXT_LENGTH = 600;
  * 也沒有額度或條款問題，沒有人能單方面把它關掉。代價是音質不如
  * 雲端的神經語音，而且吃本機 CPU。
  *
- * VM 實測（Oracle 1 OCPU / 954MB，zh_CN-huayan-medium）：
- * - Real-time factor **0.62** —— 產生 4.47 秒語音約需 2.77 秒 CPU
- * - 記憶體峰值約 **150MB**
+ * VM 實測（Oracle 1 OCPU / 954MB，zh_CN-huayan-medium，2026-09-04）：
+ * - 20 字 → 合成 **4.9 秒**，產出 4 秒語音（RTF 1.18）
+ * - 120 字 → 合成 **24.1 秒**，產出 23 秒語音（RTF 1.05）
+ * - 記憶體峰值約 150MB
  *
- * RTF 0.62 表示一顆 CPU 大約只能撐 1.6 倍即時速度，所以同時間
- * 只跑得動一路語音。並行控制在上層（VoiceSession）處理。
+ * 也就是**比即時還慢**：播放會一路追著合成跑。舊註解寫的 RTF 0.62 是
+ * 早期單次測試的數字，已被上面這組實測推翻。所以現在預設走
+ * Microsoft Edge（見 edge.ts），Piper 只當它掛掉時的後備。
  *
  * 用 --output_raw 串流輸出而不是寫檔：它會「as it becomes available」
  * 邊合成邊吐，第一個字產生時就能開始播。等整段合成完的話，
@@ -53,7 +52,7 @@ export class PiperTtsProvider implements TtsProvider {
   }
 
   async synthesize(request: SpeechRequest): Promise<SynthesizedSpeech> {
-    const text = request.text.slice(0, MAX_TEXT_LENGTH).replace(/\r?\n/g, ' ').trim();
+    const text = request.text.slice(0, MAX_SPEECH_LENGTH).replace(/\r?\n/g, ' ').trim();
 
     if (text.length === 0) {
       throw new UserFacingError('沒有可以唸出來的內容。');
@@ -100,7 +99,8 @@ export class PiperTtsProvider implements TtsProvider {
     child.stdin.end(`${text}\n`);
 
     return {
-      pcm: child.stdout,
+      audio: child.stdout,
+      format: 'pcm-s16le',
       sampleRate: this.options.sampleRate,
       provider: this.id,
       voice: this.options.voice,

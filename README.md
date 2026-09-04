@@ -96,41 +96,61 @@
 |---|---|---|
 | **聽**（STT） | Groq `whisper-large-v3-turbo` | 2,000 次／天 |
 | **想** | 與文字聊天**完全相同**的 ChatService | 共用 |
-| **說**（TTS） | Piper（本機，`zh_CN-huayan-medium`） | **無限** |
+| **說**（TTS） | Microsoft Edge 大聲朗讀（`zh-CN-XiaoyiNeural` 曉伊） | **無限，不需要帳號** |
 
 語音的 AI 回覆走的是與文字一模一樣的流程 —— 記憶、工具、伺服器設定、用量統計全部共用，不另外開一套。對話串用**語音頻道的 ID**，所以語音的上下文與文字頻道是分開的。
 
-### 為什麼 TTS 跑在本機
+### TTS 選型
 
-查證過所有免費雲端 TTS，結論是沒有一個能用：
-
-| 方案 | 為什麼不用 |
+| 方案 | 結論 |
 |---|---|
+| **Microsoft Edge 大聲朗讀**（`msedge-tts`） | **現在用這個。** 不需要帳號、API key 或信用卡，音質是微軟的神經語音 |
+| Piper（本機） | 保留為後備。不依賴任何外部服務，但在 1 vCPU 上比即時還慢 |
 | Gemini TTS | 能用，但**一天 10 次**，當一般功能等於不能用 |
 | Cloudflare MeloTTS | 唯一支援中文的模型**服務端 500**，連英文都失敗 |
-| Azure Speech F0 | 每月 50 萬字元，音質最好 —— 但**必須綁信用卡**才能開通 |
-| edge-tts | 違反 Microsoft 條款，而且**會過濾雲端 IP** |
+| Azure Speech F0 | 每月 50 萬字元 —— 但**必須綁信用卡**才能開通 |
 
-所以選了 Piper：不需要帳號、API key 或信用卡，沒有額度上限，**沒有任何人能單方面關掉它**。代價是音質不如雲端神經語音，而且吃本機 CPU。
+> **更正（2026-09-04）**：這張表原本寫「edge-tts 違反 Microsoft 條款，而且會過濾雲端 IP」。
+> 兩句都是錯的。從 Oracle 的 VM 直連該端點 326ms 就拿到完整聲線清單，**沒有任何雲端 IP 過濾**；
+> 而「違反條款」當時沒有任何出處，是憑印象寫的。因為這一格，專案繞了一大圈去試 Azure，
+> 最後退回音質與速度都更差的 Piper。
 
-VM 實測（Oracle 1 OCPU / 954MB）：
+真正該講清楚的風險是：Edge 的朗讀端點**沒有正式文件、不是公開 API**，微軟隨時可以改動或關閉。
+所以 Piper 留著沒有拿掉 —— Edge 失效時 `TtsRouter` 會自動換手，語音功能不會整個停擺。
 
-```
-Real-time factor 0.62 ~ 0.67   產生 4.47 秒語音約需 2.8 秒 CPU
-記憶體峰值 約 150MB
-```
+#### 為什麼不再用 Piper 當首選
 
-> 容器啟動後**第一次**合成會慢很多（實測 RTF 2.14），因為 61MB 的模型還沒進 page cache。之後就穩定在 0.67 上下。這只影響重新部署後的第一句話。
+VM 實測（Oracle 1 OCPU / 954MB，`zh_CN-huayan-medium`，2026-09-04）：
 
-RTF 0.62 表示一顆 CPU 只撐得住約 1.6 倍即時速度，**同時只跑得動一路語音** —— 所以 `VOICE_MAX_SESSIONS` 預設是 1，第二個伺服器要用會收到明確的拒絕訊息，而不是讓大家一起卡頓。
+| 內容 | Piper 合成耗時 | 產出語音長度 | RTF | Microsoft Edge |
+|---|---|---|---|---|
+| 20 字 | 4,902ms | 4 秒 | **1.18** | 922ms |
+| 120 字 | 24,098ms | 23 秒 | **1.05** | 1,647ms |
 
-`TtsRouter` 與其他三層（AI provider、搜尋、生圖）是同一套寫法，之後要接雲端 TTS 只要多一個檔案。
+**Piper 比即時還慢**：合成 4 秒的語音要 4.9 秒，播放會一路追著合成跑。
+這是使用者回報「延遲超久」的直接原因。
+
+> README 舊版寫的「RTF 0.62 ~ 0.67」是早期單次測試的數字，已被上面這組實測推翻。
+> 當時把慢的那次（RTF 2.14）歸因於冷啟動，其實穩定狀態本來就在 1.0 以上。
+
+Edge 產出 27 秒的語音只要 1.6 秒（RTF 0.06），而且**完全不吃本機 CPU** ——
+那顆唯一的 CPU 可以留給 ffmpeg 與 Discord 的封包處理。
+
+`VOICE_MAX_SESSIONS` 預設仍是 1，但限制的理由從「CPU 撐不住」變成「頻寬與行為可預測性」。
+
+`TtsRouter` 與其他三層（AI provider、搜尋、生圖）是同一套寫法：換手、付費來源永遠不進候選。
+
+#### SSML 注入
+
+`msedge-tts` 把文字**原樣**內插進 SSML 樣板，不做任何跳脫。送進去的是語言模型的輸出，
+而小步是公開邀請的 Bot，所以 `escapeForSsml()` 是必要的安全邊界，不是防呆 ——
+少了它，有人有辦法誘導模型吐出 `</prosody><voice name="...">` 來換掉聲線或改寫整段 SSML。
 
 ### 為什麼盡量讓 ffmpeg 做事
 
 這台機器只有 1 顆 CPU，所以兩個方向都把工作丟給 ffmpeg，Node 只負責搬位元組：
 
-- **說**：Piper 出 raw PCM → ffmpeg 轉 Opus/OGG → discord.js **直接 passthrough**，完全不用 JS 端編碼
+- **說**：Edge 出 MP3（或 Piper 出 raw PCM）→ ffmpeg 轉 Opus/OGG → discord.js **直接 passthrough**，完全不用 JS 端編碼
 - **聽**：Discord 給的是裸 Opus 封包，解碼後交給 ffmpeg 轉成 16kHz 單聲道 WAV（Whisper 的原生取樣率，而且 WAV 不需要編碼運算）
 
 > ⚠️ Discord 的語音**接收**是非官方功能，官方文件明講「Audio receive is not documented by Discord so stable support is not guaranteed」。2026 年 3 月起強制的 DAVE 端對端加密曾讓 `@discordjs/voice` 的接收完全失效，修正已包含在 **0.19.2**（PR #11449 於 2026-03-13 合併，0.19.2 於 03-17 發布）。這跟 YouTube 不同 —— **沒有違反條款**，只是不保證長期穩定。
