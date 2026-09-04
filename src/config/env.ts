@@ -94,6 +94,14 @@ const envSchema = z.object({
   /** 同時可以有幾個伺服器在使用語音。Piper 一次只跑得動一路，所以預設 1。 */
   VOICE_MAX_SESSIONS: envInt(1, 1),
 
+  /**
+   * 語音對話專用的模型，與文字聊天的 /settings model 分開。
+   *
+   * 語音對延遲的敏感度比文字高得多 —— 文字慢個幾秒只是等，語音慢幾秒就是尷尬的沉默。
+   * Groq 的推論速度遠快於 Gemini，所以預設走 Groq；文字聊天不受影響。
+   */
+  VOICE_MODEL: z.enum(ALLOWED_MODELS).default('openai/gpt-oss-20b'),
+
   // --- 對話上下文 ---
   /** 每次送進模型的歷史訊息則數（含 bot 回覆）。 */
   CONTEXT_MESSAGE_LIMIT: envInt(20, 2),

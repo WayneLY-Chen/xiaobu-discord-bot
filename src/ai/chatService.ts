@@ -34,6 +34,8 @@ export interface ChatContext {
   /** Discord displayName（暱稱優先），會被清理後放進 prompt。 */
   displayName: string;
   content: string;
+  /** 這一輪來自語音頻道，回覆會被唸出來。 */
+  voiceMode?: boolean;
 }
 
 /**
@@ -146,6 +148,7 @@ export class ChatService {
           }))
         : [],
       toolsAvailable: tools.length > 0,
+      voiceMode: context.voiceMode ?? false,
     });
 
     const turns: ChatTurn[] = buildChatHistory(

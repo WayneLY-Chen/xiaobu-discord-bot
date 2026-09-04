@@ -27,6 +27,22 @@ const TOOL_GUIDANCE = [
   '- 工具回傳失敗或查不到時，就照實說查不到，絕對不要自己編一個答案。',
 ].join('\n');
 
+/**
+ * 語音對話的額外規則。
+ *
+ * 一般回覆是寫給眼睛看的：Markdown、條列、程式碼區塊、網址在 Discord 上都好讀，
+ * 但在語音裡會被 TTS 逐字唸出「星號星號」「h t t p s 冒號」，而且長段落聽的人
+ * 根本記不住。合成時間也跟字數成正比 —— 少唸 300 字就少等好幾秒。
+ */
+const VOICE_GUIDANCE = [
+  '這是語音對話，你的回覆會被唸出來給對方聽：',
+  '- 講重點就好，兩三句話、100 字以內。對方是用聽的，長篇大論記不住。',
+  '- 不要用 Markdown：星號、井字號、條列符號、程式碼區塊都會被原樣唸出來。',
+  '- 不要唸網址或檔案路徑。要提到來源就說名字，例如「維基百科上寫的」。',
+  '- 數字和單位用講話的方式說，例如「攝氏二十八度」而不是「28°C」。',
+  '- 需要列很多項的時候，挑最重要的兩三個講，然後說「還有其他的可以再問我」。',
+].join('\n');
+
 export interface PromptContext {
   botName: string;
   guildName: string;
@@ -47,6 +63,8 @@ export interface PromptContext {
   guildFacts?: string[];
   /** 這一輪有沒有提供工具給模型。 */
   toolsAvailable?: boolean;
+  /** 這一輪是語音對話，回覆會被唸出來。 */
+  voiceMode?: boolean;
 }
 
 /**
@@ -69,13 +87,19 @@ export function buildSystemInstruction(context: PromptContext): string {
     '',
     '回覆規則：',
     `- 使用 ${context.locale} 回覆，除非使用者明確要求其他語言。`,
-    '- 回覆會顯示在 Discord，請控制在 1500 字以內，善用 Markdown 與程式碼區塊。',
+    context.voiceMode
+      ? '- 回覆會被唸出來給對方聽，詳細規則見下方。'
+      : '- 回覆會顯示在 Discord，請控制在 1500 字以內，善用 Markdown 與程式碼區塊。',
     '- 不確定的事情就老實說不知道，不要編造事實、來源或連結。',
     '- 不要編造關於真實人物的事情。有人問起某個人（同伺服器成員、公眾人物都算），',
     '  只根據對話中真的出現過的內容回答；沒有依據就直說不知道。',
     '- 特別是負面、涉及性或違法的描述，就算有人先開玩笑起頭，也不要跟著附和或加細節。',
     '  這種玩笑對被講的人是真的傷害，用「我不太清楚欸」帶過就好，不用說教。',
   ];
+
+  if (context.voiceMode) {
+    sections.push('', VOICE_GUIDANCE);
+  }
 
   if (context.toolsAvailable) {
     sections.push('', TOOL_GUIDANCE);

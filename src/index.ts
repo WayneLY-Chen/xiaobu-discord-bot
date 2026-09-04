@@ -167,8 +167,11 @@ async function main(): Promise<void> {
               userId: where.userId,
               displayName,
               content: text,
+              voiceMode: true,
             },
-            settings,
+            // 語音固定用 VOICE_MODEL，不跟著 /settings model 走。語音對延遲的
+            // 敏感度比文字高得多：文字慢幾秒只是等，語音慢幾秒就是尷尬的沉默。
+            { ...settings, model: env.VOICE_MODEL },
           );
 
           // 語音只唸模型講的話 —— 來源清單與換手提示在語音裡唸出來很吵，
