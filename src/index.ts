@@ -11,13 +11,14 @@ import { startHealthServer } from './bot/healthServer.js';
 import { applyBotNickname, resolveBotName } from './bot/nickname.js';
 import { loadDotEnvFile, loadEnv } from './config/env.js';
 import { closeDatabase, initDatabase } from './database/client.js';
+import { pruneOldMessages } from './database/repositories/conversations.js';
 import { upsertGuild } from './database/repositories/identity.js';
 import { ensureGuildSettings } from './database/repositories/settings.js';
 import { registerGuildLifecycle } from './events/guildLifecycle.js';
 import { registerInteractionCreate } from './events/interactionCreate.js';
-import { registerMessageCreate } from './events/messageCreate.js';
+import { explainDenial, registerMessageCreate } from './events/messageCreate.js';
 import { logger, setLogLevel } from './utils/logger.js';
-import { TieredRateLimiter } from './utils/rateLimiter.js';
+import { CombinedRateLimiter, TieredRateLimiter } from './utils/rateLimiter.js';
 import { createTtsRouter } from './voice/registry.js';
 import { VoiceManager } from './voice/manager.js';
 import { GroqWhisperStt } from './voice/stt.js';
@@ -27,6 +28,9 @@ import { upsertUser } from './database/repositories/identity.js';
 
 /** 定期清掉 rate limiter 裡過期的 key，避免長時間執行後記憶體堆積。 */
 const RATE_LIMIT_PRUNE_INTERVAL_MS = 5 * 60 * 1000;
+
+/** 訊息保留期清理的間隔。一小時一次就夠，這不是需要即時的事。 */
+const RETENTION_SWEEP_INTERVAL_MS = 60 * 60 * 1000;
 
 async function main(): Promise<void> {
   loadDotEnvFile();
@@ -54,11 +58,14 @@ async function main(): Promise<void> {
   const context: BotContext = {
     env,
     db,
-    rateLimiter: new TieredRateLimiter({
+    rateLimiter: new CombinedRateLimiter({
       windowMs: env.RATE_LIMIT_WINDOW_MS,
       userLimit: env.RATE_LIMIT_USER,
       guildLimit: env.RATE_LIMIT_GUILD,
       globalLimit: env.RATE_LIMIT_GLOBAL,
+      dailyUserLimit: env.DAILY_LIMIT_USER,
+      dailyGuildLimit: env.DAILY_LIMIT_GUILD,
+      dailyGlobalLimit: env.DAILY_LIMIT_GLOBAL,
     }),
     router,
     chat: new ChatService(
@@ -137,6 +144,9 @@ async function main(): Promise<void> {
         sttTimeoutMs: env.STT_TIMEOUT_MS,
         silenceMs: env.VOICE_SILENCE_MS,
         maxUtteranceMs: env.VOICE_MAX_UTTERANCE_MS,
+        idleMs: env.VOICE_IDLE_MS,
+        wakeWord: env.VOICE_WAKE_WORD,
+        followUpMs: env.VOICE_FOLLOW_UP_MS,
         respond: async (where, text) => {
           const guild = client.guilds.cache.get(where.guildId);
           const channel = guild?.channels.cache.get(where.channelId);
@@ -157,7 +167,7 @@ async function main(): Promise<void> {
           if (!settings.chatEnabled) return '';
 
           const denial = context.rateLimiter.check(guild.id, where.userId);
-          if (denial) return '你講太快了，讓我喘口氣。';
+          if (denial) return explainDenial(denial);
 
           const reply = await context.chat.reply(
             {
@@ -193,6 +203,20 @@ async function main(): Promise<void> {
     RATE_LIMIT_PRUNE_INTERVAL_MS,
   );
 
+  const retentionMs = env.MESSAGE_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+  const sweep = (): void => {
+    try {
+      const removed = pruneOldMessages(db, retentionMs);
+      if (removed > 0) logger.info(`已清掉 ${removed} 則超過 ${env.MESSAGE_RETENTION_DAYS} 天的訊息`);
+    } catch (error) {
+      logger.warn(`清理舊訊息失敗：${String(error)}`);
+    }
+  };
+
+  // 啟動時先掃一次，否則保留期改短之後要等一小時才會生效
+  if (retentionMs > 0) sweep();
+  const retentionTimer = retentionMs > 0 ? setInterval(sweep, RETENTION_SWEEP_INTERVAL_MS) : undefined;
+
   // 指令註冊失敗不該讓整個 Bot 起不來：聊天功能（@Bot）不依賴 slash command，
   // 先讓 Bot 上線，把問題當成警告印出來就好。
   if (env.DEPLOY_COMMANDS_ON_START) {
@@ -218,6 +242,7 @@ async function main(): Promise<void> {
 
     logger.info(`收到 ${signal}，準備關閉…`);
     clearInterval(pruneTimer);
+    if (retentionTimer) clearInterval(retentionTimer);
     // 語音連線與底下的 piper / ffmpeg 子行程要先收掉，
     // 否則 client 斷線後它們會變成孤兒行程繼續佔記憶體
     context.voice?.destroyAll();

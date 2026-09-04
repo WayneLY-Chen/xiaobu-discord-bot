@@ -12,7 +12,11 @@ export async function createTtsRouter(env: Env): Promise<TtsRouter> {
   // Edge 排在前面：Piper 在正式機上比即時還慢（見 piper.ts 的實測數字），
   // 只留著當 Edge 掛掉時的後備。
   const providers: TtsProvider[] = [
-    new EdgeTtsProvider({ voice: env.EDGE_TTS_VOICE }),
+    new EdgeTtsProvider({
+      voice: env.EDGE_TTS_VOICE,
+      pitch: env.EDGE_TTS_PITCH,
+      rate: env.EDGE_TTS_RATE,
+    }),
     new PiperTtsProvider({
       binaryPath: env.PIPER_BINARY_PATH,
       modelPath: env.PIPER_MODEL_PATH,

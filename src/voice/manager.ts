@@ -4,6 +4,14 @@ import { logger } from '../utils/logger.js';
 import { VoiceSession, type VoiceSessionDeps } from './session.js';
 
 /**
+ * 呼叫端要提供的相依。
+ *
+ * onIdle 由 VoiceManager 自己補上 —— 那是「把自己從 map 裡移掉」，
+ * 只有 manager 知道怎麼做，讓外面填等於把內部狀態的責任丟出去。
+ */
+export type VoiceManagerDeps = Omit<VoiceSessionDeps, 'onIdle'>;
+
+/**
  * 管理各伺服器的語音階段。
  *
  * 有全域上限：Piper 的 real-time factor 是 0.62，這台 1 OCPU 的機器
@@ -14,7 +22,7 @@ export class VoiceManager {
   private readonly sessions = new Map<string, VoiceSession>();
 
   constructor(
-    private readonly deps: VoiceSessionDeps,
+    private readonly deps: VoiceManagerDeps,
     private readonly maxSessions: number,
   ) {}
 
@@ -42,7 +50,13 @@ export class VoiceManager {
       );
     }
 
-    const session = await VoiceSession.join(channel, this.deps);
+    const session = await VoiceSession.join(channel, {
+      ...this.deps,
+      // 閒置逾時要把名額還回去，否則一個沒人講話的連線會永久佔住全域唯一的位置
+      onIdle: (guildId) => {
+        this.leave(guildId);
+      },
+    });
     this.sessions.set(channel.guild.id, session);
     logger.info(`已加入語音頻道 ${channel.name}（${channel.guild.name}）`);
 

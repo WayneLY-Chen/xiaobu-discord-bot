@@ -17,6 +17,7 @@ import type { VoiceBasedChannel } from 'discord.js';
 import prism from 'prism-media';
 import { toUserMessage, UserFacingError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
+import { normalizeForMatch } from '../utils/textMatch.js';
 import { DISCORD_CHANNELS, DISCORD_SAMPLE_RATE } from './types.js';
 import type { TtsRouter } from './router.js';
 import type { GroqWhisperStt } from './stt.js';
@@ -47,6 +48,25 @@ export interface VoiceSessionDeps {
   sttTimeoutMs: number;
   silenceMs: number;
   maxUtteranceMs: number;
+  /**
+   * 多久沒有人講話就自動離開。
+   *
+   * 在這之前小步進了語音頻道就會一直待著，直到有人下 /voice leave 或 Bot 重啟。
+   * 全域只有 VOICE_MAX_SESSIONS 個名額，一個忘記踢掉的閒置連線等於把整個
+   * 功能鎖給那一個伺服器。
+   */
+  idleMs: number;
+  /**
+   * 喚醒詞。空字串代表關閉，回到「每一句話都回應」。
+   *
+   * 沒有這道關卡的話，語音頻道裡三五個人閒聊，每一句都會送一次 Gemini ——
+   * 一天 500 次的額度撐不到十分鐘，而且小步會一直插話。
+   */
+  wakeWord: string;
+  /** 回答完之後這段時間內的追問不需要再叫一次名字。 */
+  followUpMs: number;
+  /** 閒置逾時要通知上層把 session 收掉，否則名額不會被釋放。 */
+  onIdle(guildId: string): void;
 }
 
 /**
@@ -66,6 +86,10 @@ export class VoiceSession {
   /** Piper 一次只跑得動一路，所以合成與播放要排隊。 */
   private speaking: Promise<void> = Promise.resolve();
   private destroyed = false;
+  private lastActivityAt = Date.now();
+  /** 在這個時間點之前，追問不需要再叫一次名字。 */
+  private engagedUntil = 0;
+  private readonly idleTimer: NodeJS.Timeout;
 
   private constructor(
     readonly guildId: string,
@@ -83,6 +107,12 @@ export class VoiceSession {
     this.player.on('error', (error) => logger.error('語音播放失敗', error));
     this.connection.subscribe(this.player);
     this.startListening();
+
+    // 檢查頻率取閒置時間與 30 秒的較小值：閒置設得很短時也要跟得上
+    this.idleTimer = setInterval(
+      () => this.checkIdle(),
+      Math.max(5_000, Math.min(this.deps.idleMs, 30_000)),
+    );
   }
 
   static async join(
@@ -121,9 +151,36 @@ export class VoiceSession {
     if (this.destroyed) return;
     this.destroyed = true;
 
+    clearInterval(this.idleTimer);
+
     this.player.stop(true);
     this.connection.destroy();
     logger.info(`已離開語音頻道 ${this.channelId}`);
+  }
+
+  /** 沒人講話也沒在唸東西就自己出去，把全域的語音名額還回去。 */
+  private checkIdle(): void {
+    if (this.destroyed) return;
+    if (Date.now() - this.lastActivityAt < this.deps.idleMs) return;
+
+    logger.info(
+      `語音頻道 ${this.channelId} 閒置超過 ${Math.round(this.deps.idleMs / 60_000)} 分鐘，自動離開`,
+    );
+    this.deps.onIdle(this.guildId);
+  }
+
+  /**
+   * 這句話該不該回應。
+   *
+   * 三種情況會回應：沒設喚醒詞（等於關閉這道關卡）、句子裡叫了名字、
+   * 或是在上一次回答之後的追問視窗內。
+   */
+  private shouldRespond(text: string): boolean {
+    const wake = this.deps.wakeWord.trim();
+    if (wake.length === 0) return true;
+    if (Date.now() < this.engagedUntil) return true;
+
+    return normalizeForMatch(text).includes(normalizeForMatch(wake));
   }
 
   private async speakNow(text: string): Promise<void> {
@@ -191,6 +248,7 @@ export class VoiceSession {
       // 同一個人重複觸發時不要開第二條訂閱，否則會收到重複的音訊
       if (this.listening.has(userId) || this.destroyed) return;
       this.listening.add(userId);
+      this.lastActivityAt = Date.now();
 
       void this.captureUtterance(userId).finally(() => this.listening.delete(userId));
     });
@@ -253,11 +311,21 @@ export class VoiceSession {
 
       logger.info(`語音辨識：${heard}`);
 
+      if (!this.shouldRespond(heard)) {
+        logger.debug('沒有叫到名字也不在追問視窗內，不回應');
+        return;
+      }
+
       const answer = await this.deps.respond(
         { guildId: this.guildId, channelId: this.channelId, userId },
         heard,
       );
-      if (answer.length > 0) await this.speak(answer);
+      if (answer.length > 0) {
+        // 回答完就進入追問視窗：接下來這段時間不用再叫一次名字
+        this.engagedUntil = Date.now() + this.deps.followUpMs;
+        this.lastActivityAt = Date.now();
+        await this.speak(answer);
+      }
     } catch (error) {
       logger.warn(`語音處理失敗：${toUserMessage(error)}`);
       // 只有使用者看得懂的錯誤才唸出來，內部錯誤不要變成噪音

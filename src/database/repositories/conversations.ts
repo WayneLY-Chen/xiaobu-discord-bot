@@ -1,4 +1,4 @@
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, lt, notInArray, sql } from 'drizzle-orm';
 import type { Db } from '../client.js';
 import { conversations, messages, type MessageRow } from '../schema.js';
 
@@ -72,4 +72,33 @@ export function clearConversation(db: Db, guildId: string, channelId: string): n
 
   const result = db.delete(messages).where(eq(messages.conversationId, conversation.id)).run();
   return result.changes;
+}
+
+/**
+ * 刪掉超過保留期的訊息，以及跟著空掉的對話串。
+ *
+ * 在這之前 messages 這張表只增不減 —— 只有 /reset 會刪，而那要有人主動去按。
+ * 一個公開 Bot 累積下來的是「所有伺服器所有頻道的全部對話，永久保存」，
+ * 那既是磁碟問題也是隱私問題。
+ *
+ * 回傳刪掉的訊息筆數。retentionMs 為 0 或負數代表不清理。
+ */
+export function pruneOldMessages(db: Db, retentionMs: number, now: number = Date.now()): number {
+  if (retentionMs <= 0) return 0;
+
+  // created_at 存的是 unixepoch **秒**，不是毫秒也不是 Date
+  const cutoffSeconds = Math.floor((now - retentionMs) / 1000);
+  const removed = db.delete(messages).where(lt(messages.createdAt, cutoffSeconds)).run().changes;
+
+  // 訊息刪光的對話串留著沒有意義，順手收掉（外鍵是 cascade，順序不能反）
+  db.delete(conversations)
+    .where(
+      notInArray(
+        conversations.id,
+        db.selectDistinct({ id: messages.conversationId }).from(messages),
+      ),
+    )
+    .run();
+
+  return removed;
 }

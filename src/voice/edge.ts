@@ -28,6 +28,10 @@ export function escapeForSsml(text: string): string {
 export interface EdgeTtsOptions {
   /** 聲線的 ShortName，例如 zh-CN-XiaoyiNeural（曉伊）。 */
   voice: string;
+  /** 音高，例如 `+30Hz`、`+2st`、`high`。調高會聽起來比較年輕。 */
+  pitch: string;
+  /** 語速，例如 `+10%`、`fast`。 */
+  rate: string;
 }
 
 /**
@@ -75,7 +79,12 @@ export class EdgeTtsProvider implements TtsProvider {
       '連線到語音合成服務逾時',
     );
 
-    const { audioStream } = tts.toStream(escapeForSsml(text));
+    // pitch / rate 一樣會被原樣內插進 <prosody> 的屬性裡，所以值在 env 那層
+    // 就用嚴格的樣式擋過了 —— 這裡不做第二次驗證，但不能把使用者輸入接到這裡。
+    const { audioStream } = tts.toStream(escapeForSsml(text), {
+      pitch: this.options.pitch,
+      rate: this.options.rate,
+    });
 
     const close = (): void => {
       try {

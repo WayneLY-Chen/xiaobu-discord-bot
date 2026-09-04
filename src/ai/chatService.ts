@@ -93,6 +93,11 @@ export class ChatService {
     this.botName = name;
   }
 
+  /** /settings prompt full 要用它組出與實際送出去一模一樣的 system instruction。 */
+  get name(): string {
+    return this.botName;
+  }
+
   /** /help 用來決定要不要把搜尋列進功能清單 —— 沒設定搜尋來源時就不該宣稱有這個功能。 */
   get searchEnabled(): boolean {
     return this.search.enabled;

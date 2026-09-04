@@ -85,6 +85,25 @@ const envSchema = z.object({
    * zh-TW-HsiaoChenNeural（曉臻，台灣腔）、zh-TW-HsiaoYuNeural（曉雨，台灣腔）。
    */
   EDGE_TTS_VOICE: z.string().min(1).default('zh-CN-XiaoyiNeural'),
+
+  /**
+   * 音高與語速。
+   *
+   * 這兩個值會被 msedge-tts **原樣內插**進 `<prosody pitch="..." rate="...">`
+   * 的 XML 屬性裡，套件本身不做任何跳脫，所以這裡用嚴格的樣式擋住 ——
+   * 只接受相對數值（+30Hz、-2st、+10%）或那幾個具名等級。
+   *
+   * Edge 的免費中文聲線沒有兒童音，想要更年輕的感覺就把 pitch 調高，
+   * 例如 `+25Hz`。調太多會變得不自然。
+   */
+  EDGE_TTS_PITCH: z
+    .string()
+    .regex(/^([+-]\d{1,3}(Hz|st|%)|x-low|low|medium|high|x-high|default)$/)
+    .default('default'),
+  EDGE_TTS_RATE: z
+    .string()
+    .regex(/^([+-]\d{1,3}%|x-slow|slow|medium|fast|x-fast|default)$/)
+    .default('default'),
   /** 語音辨識逾時。實測 3.5 秒的語音約 0.5 秒回覆。 */
   STT_TIMEOUT_MS: envInt(20_000, 1000),
   /** 一段發言講多久之後強制切斷送去辨識，避免有人講不停把記憶體吃光。 */
@@ -97,6 +116,20 @@ const envSchema = z.object({
    * 450 字的中文大約是 90～100 秒，所以預設留 3 分鐘。
    */
   VOICE_MAX_PLAYBACK_MS: envInt(180_000, 10_000),
+
+  /** 多久沒人講話就自動離開語音頻道，把全域名額還回去。 */
+  VOICE_IDLE_MS: envInt(300_000, 30_000),
+
+  /**
+   * 語音的喚醒詞。留空代表關閉，回到「每一句話都回應」。
+   *
+   * 沒有它的話，語音頻道裡三五個人閒聊，每一句都會送一次 AI ——
+   * 一天 500 次的 Gemini 額度撐不到十分鐘，而且小步會一直插話。
+   */
+  VOICE_WAKE_WORD: z.string().default('小步'),
+
+  /** 回答完之後這段時間內的追問不用再叫一次名字。 */
+  VOICE_FOLLOW_UP_MS: envInt(30_000, 0),
 
   VOICE_MAX_SESSIONS: envInt(1, 1),
 
@@ -119,6 +152,23 @@ const envSchema = z.object({
   RATE_LIMIT_USER: envInt(5),
   RATE_LIMIT_GUILD: envInt(20),
   RATE_LIMIT_GLOBAL: envInt(60),
+
+  /**
+   * 每日上限。只有每分鐘那層是不夠的 —— 免費 API 真正會用完的是每日額度
+   * （Gemini Flash-Lite 500 RPD、Groq 1000 RPD），而每分鐘 60 次的上限
+   * 一小時就能把一整天的份耗光。
+   *
+   * 全域預設 1200：低於 Gemini 500 + Groq 1000 的合計容量，留了換手的餘裕。
+   */
+  /**
+   * 對話訊息保留幾天。設 0 代表永久保留（在這之前是唯一的行為）。
+   * 這既是磁碟問題也是隱私問題：公開 Bot 累積的是所有伺服器所有頻道的全部對話。
+   */
+  MESSAGE_RETENTION_DAYS: envInt(30, 0),
+
+  DAILY_LIMIT_USER: envInt(100),
+  DAILY_LIMIT_GUILD: envInt(400),
+  DAILY_LIMIT_GLOBAL: envInt(1200),
 
   // --- 基礎設施 ---
   DATABASE_PATH: z.string().default('./data/bot.db'),

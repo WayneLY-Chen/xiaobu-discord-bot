@@ -16,6 +16,7 @@ import { upsertGuild, upsertUser } from '../database/repositories/identity.js';
 import { chunkMessage } from '../utils/messageChunk.js';
 import { toUserMessage, UserFacingError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
+import type { RateLimitDenial } from '../utils/rateLimiter.js';
 
 /** Discord 的 typing 指示大約 10 秒後消失，所以要定期重送。 */
 const TYPING_REFRESH_MS = 8_000;
@@ -73,15 +74,7 @@ async function handleMessage(message: Message, context: BotContext): Promise<voi
 
   const denial = context.rateLimiter.check(message.guildId, message.author.id);
   if (denial) {
-    const seconds = Math.ceil(denial.retryAfterMs / 1000);
-    const reason =
-      denial.scope === 'user'
-        ? `你問得有點快，請 ${seconds} 秒後再試。`
-        : denial.scope === 'guild'
-          ? `這個伺服器目前請求量偏高，請 ${seconds} 秒後再試。`
-          : `Bot 目前整體負載偏高，請 ${seconds} 秒後再試。`;
-
-    await message.reply(reason);
+    await message.reply(explainDenial(denial));
     return;
   }
 
@@ -110,6 +103,33 @@ async function handleMessage(message: Message, context: BotContext): Promise<voi
   } finally {
     stopTyping();
   }
+}
+
+/**
+ * 把限流結果翻成人話。
+ *
+ * 每分鐘與每天要講不同的話：前者等幾十秒就好，後者是「今天沒了」——
+ * 對後者說「請 43200 秒後再試」既沒用又像壞掉。
+ */
+export function explainDenial(denial: RateLimitDenial): string {
+  if (denial.window === 'day') {
+    const hours = Math.ceil(denial.retryAfterMs / 3_600_000);
+    const who =
+      denial.scope === 'user'
+        ? '你今天問我的次數已經到上限了'
+        : denial.scope === 'guild'
+          ? '這個伺服器今天的用量已經到上限了'
+          : '我今天整體的免費額度已經用完了';
+
+    return `${who}。免費的 API 每天有固定的份額，大約 ${hours} 小時後會恢復。`;
+  }
+
+  const seconds = Math.ceil(denial.retryAfterMs / 1000);
+  return denial.scope === 'user'
+    ? `你問得有點快，請 ${seconds} 秒後再試。`
+    : denial.scope === 'guild'
+      ? `這個伺服器目前請求量偏高，請 ${seconds} 秒後再試。`
+      : `Bot 目前整體負載偏高，請 ${seconds} 秒後再試。`;
 }
 
 /**

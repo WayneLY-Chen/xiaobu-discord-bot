@@ -1,6 +1,15 @@
-import { Events, MessageFlags, type Client, type Interaction } from 'discord.js';
+import {
+  Events,
+  MessageFlags,
+  PermissionFlagsBits,
+  type Client,
+  type Interaction,
+  type ModalSubmitInteraction,
+} from 'discord.js';
 import type { BotContext } from '../bot/context.js';
 import { commandsByName } from '../commands/index.js';
+import { PROMPT_INPUT_ID, PROMPT_MODAL_ID } from '../commands/settings.js';
+import { ensureGuildSettings, updateGuildSettings } from '../database/repositories/settings.js';
 import { upsertGuild, upsertUser } from '../database/repositories/identity.js';
 import { toUserMessage, UserFacingError } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
@@ -14,6 +23,11 @@ export function registerInteractionCreate(client: Client, context: BotContext): 
 }
 
 async function handleInteraction(interaction: Interaction, context: BotContext): Promise<void> {
+  if (interaction.isModalSubmit()) {
+    await handlePromptModal(interaction, context);
+    return;
+  }
+
   if (!interaction.isChatInputCommand()) return;
 
   const command = commandsByName.get(interaction.commandName);
@@ -45,4 +59,40 @@ async function handleInteraction(interaction: Interaction, context: BotContext):
       await interaction.reply({ content, flags: MessageFlags.Ephemeral }).catch(() => undefined);
     }
   }
+}
+
+/**
+ * /settings prompt edit 那個編輯視窗送出來的內容。
+ *
+ * 權限在這裡**再檢查一次**：視窗打開到按下送出之間可能隔了好幾分鐘，
+ * 中間權限被拔掉的話不該還讓它寫進去。
+ */
+async function handlePromptModal(
+  interaction: ModalSubmitInteraction,
+  context: BotContext,
+): Promise<void> {
+  if (interaction.customId !== PROMPT_MODAL_ID) return;
+  if (!interaction.guildId) return;
+
+  if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) {
+    await interaction.reply({
+      content: '你需要「管理伺服器」權限才能修改設定。',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  const text = interaction.fields.getTextInputValue(PROMPT_INPUT_ID).trim();
+  ensureGuildSettings(context.db, interaction.guildId);
+  updateGuildSettings(context.db, interaction.guildId, {
+    systemPrompt: text.length > 0 ? text : null,
+  });
+
+  await interaction.reply({
+    content:
+      text.length > 0
+        ? `已更新系統指示（${text.length} 字）。用 \`/settings prompt full\` 可以看實際送給模型的完整版本。`
+        : '內容是空的，已清除自訂的系統指示。',
+    flags: MessageFlags.Ephemeral,
+  });
 }

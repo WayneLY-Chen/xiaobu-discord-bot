@@ -1,13 +1,20 @@
 import {
+  ActionRowBuilder,
   ChannelType,
   ChatInputCommandInteraction,
   EmbedBuilder,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
   InteractionContextType,
   MessageFlags,
   PermissionFlagsBits,
   SlashCommandBuilder,
 } from 'discord.js';
 import type { BotContext, Command } from '../bot/context.js';
+import { buildSystemInstruction } from '../ai/prompt.js';
+import { listMemories } from '../database/repositories/memories.js';
+import { chunkMessage } from '../utils/messageChunk.js';
 import { TRIGGER_COOLDOWN_SECONDS } from '../events/messageCreate.js';
 import { MAX_SYSTEM_PROMPT_LENGTH } from '../config/constants.js';
 import {
@@ -108,16 +115,17 @@ export const settingsCommand: Command = {
           option.setName('enabled').setDescription('是否啟用').setRequired(true),
         ),
     )
-    .addSubcommand((sub) =>
-      sub
+    .addSubcommandGroup((group) =>
+      group
         .setName('prompt')
-        .setDescription('自訂系統指示；不填則清除')
-        .addStringOption((option) =>
-          option
-            .setName('text')
-            .setDescription('給 AI 的額外指示')
-            .setMaxLength(MAX_SYSTEM_PROMPT_LENGTH),
-        ),
+        .setDescription('自訂給小步的系統指示')
+        .addSubcommand((sub) =>
+          sub.setName('edit').setDescription('開一個編輯視窗，裡面已經填好目前的內容'),
+        )
+        .addSubcommand((sub) =>
+          sub.setName('full').setDescription('顯示實際送給模型的完整系統指示'),
+        )
+        .addSubcommand((sub) => sub.setName('clear').setDescription('清除自訂的系統指示')),
     )
     .addSubcommandGroup((group) =>
       group
@@ -207,6 +215,11 @@ export const settingsCommand: Command = {
       return;
     }
 
+    if (interaction.options.getSubcommandGroup() === 'prompt') {
+      await handlePrompt(interaction, context, guildId);
+      return;
+    }
+
     if (interaction.options.getSubcommandGroup() === 'trigger') {
       await handleTriggers(interaction, context, guildId);
       return;
@@ -288,13 +301,6 @@ export const settingsCommand: Command = {
         return;
       }
 
-      case 'prompt': {
-        const text = interaction.options.getString('text');
-        updateGuildSettings(db, guildId, { systemPrompt: text ?? null });
-        await reply(interaction, text ? '已更新系統指示。' : '已清除系統指示。');
-        return;
-      }
-
       case 'reset': {
         resetGuildSettings(db, guildId);
         await reply(interaction, '已還原所有伺服器設定。');
@@ -321,6 +327,101 @@ export const settingsCommand: Command = {
  * prompt.ts 裡那些「不要講真實人物壞話」的守則在這裡一條都不生效。
  * 所以權限守在 Manage Guild，內容由設定的管理員自行負責。
  */
+/** 編輯視窗的 customId。interactionCreate 靠它認出這是誰送出來的。 */
+export const PROMPT_MODAL_ID = 'settings:prompt';
+export const PROMPT_INPUT_ID = 'text';
+
+/**
+ * 系統指示的檢視與編輯。
+ *
+ * 改成彈出視窗而不是 slash command 的字串選項，是因為那個輸入框**打不了換行**，
+ * 而且每次都要把整段重打一遍 —— 想「改一個字」等於重寫。視窗會預先填入目前的
+ * 內容，直接在上面改就好。
+ */
+async function handlePrompt(
+  interaction: ChatInputCommandInteraction,
+  context: BotContext,
+  guildId: string,
+): Promise<void> {
+  const { db } = context;
+
+  switch (interaction.options.getSubcommand()) {
+    case 'edit': {
+      const current = ensureGuildSettings(db, guildId).systemPrompt ?? '';
+
+      const input = new TextInputBuilder()
+        .setCustomId(PROMPT_INPUT_ID)
+        .setLabel('給小步的額外指示')
+        .setStyle(TextInputStyle.Paragraph)
+        .setRequired(false)
+        .setMaxLength(MAX_SYSTEM_PROMPT_LENGTH)
+        .setPlaceholder('例如：回答盡量簡短；提到公司內部系統時一律用英文原名')
+        .setValue(current);
+
+      await interaction.showModal(
+        new ModalBuilder()
+          .setCustomId(PROMPT_MODAL_ID)
+          .setTitle('編輯系統指示')
+          .addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(input)),
+      );
+      return;
+    }
+
+    case 'clear': {
+      updateGuildSettings(db, guildId, { systemPrompt: null });
+      await reply(interaction, '已清除自訂的系統指示。小步的預設人格不受影響。');
+      return;
+    }
+
+    case 'full': {
+      // 這裡刻意用與 ChatService 完全相同的組法，否則顯示的東西跟實際送出去的會不一樣
+      const guildRow = ensureGuildSettings(db, guildId);
+      const userRow = getUserSettings(db, interaction.user.id);
+      const settings = resolveSettings(guildRow, userRow, {
+        model: context.env.DEFAULT_MODEL,
+        locale: 'zh-TW',
+      });
+
+      const full = buildSystemInstruction({
+        botName: context.chat.name,
+        guildName: interaction.guild?.name ?? '這個伺服器',
+        channelName: interaction.channel && 'name' in interaction.channel
+          ? (interaction.channel.name ?? '某個頻道')
+          : '某個頻道',
+        speaker: interaction.member && 'displayName' in interaction.member
+          ? interaction.member.displayName
+          : interaction.user.displayName,
+        locale: settings.locale,
+        guildSystemPrompt: settings.systemPrompt,
+        userPersonality: settings.personality,
+        guildFacts: listGuildFacts(db, guildId).map((row) => row.content),
+        memories: settings.memoryEnabled
+          ? listMemories(db, guildId, interaction.user.id).map((row) => ({
+              id: row.id,
+              content: row.content,
+            }))
+          : [],
+        toolsAvailable: true,
+      });
+
+      const chunks = chunkMessage([
+        '這是**現在**送給模型的完整系統指示（以你的身分、這個頻道為準）：',
+        '',
+        full,
+      ].join('\n'));
+
+      await interaction.reply({ content: chunks[0] ?? '（空的）', flags: MessageFlags.Ephemeral });
+      for (const chunk of chunks.slice(1)) {
+        await interaction.followUp({ content: chunk, flags: MessageFlags.Ephemeral });
+      }
+      return;
+    }
+
+    default:
+      await reply(interaction, '未知的子指令。');
+  }
+}
+
 async function handleTriggers(
   interaction: ChatInputCommandInteraction,
   context: BotContext,
