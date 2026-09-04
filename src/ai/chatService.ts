@@ -228,8 +228,18 @@ export class ChatService {
 
     // 只把模型真正說的話寫進對話紀錄。來源與換手提示是給這一次的讀者看的，
     // 不該混進之後送回模型的歷史。
-    appendAssistantMessage(this.db, conversationId, answer);
-    touchConversation(this.db, conversationId);
+    // 重新取一次 id，不要沿用 await 之前那個。中間可能隔了四輪 AI 呼叫、
+    // 最長 100 秒，而 /reset 會清空這條對話串、保留期掃描接著把空的父列收掉 ——
+    // 那時候用舊 id 寫入會直接撞 FOREIGN KEY constraint failed，答案已經生出來
+    // 卻整段丟掉，額度也白花。走 unique index，成本可以忽略。
+    const liveConversationId = getOrCreateConversation(
+      this.db,
+      context.guildId,
+      context.channelId,
+    );
+
+    appendAssistantMessage(this.db, liveConversationId, answer);
+    touchConversation(this.db, liveConversationId);
 
     recordUsage(this.db, {
       guildId: context.guildId,

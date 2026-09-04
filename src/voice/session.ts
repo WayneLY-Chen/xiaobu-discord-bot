@@ -25,6 +25,9 @@ import type { GroqWhisperStt } from './stt.js';
 /** 等待 Discord 語音連線就緒的時間。 */
 const CONNECTION_READY_MS = 20_000;
 
+/** 閒置檢查的頻率。VOICE_IDLE_MS 的下限是 30 秒，所以這個粒度夠。 */
+const IDLE_CHECK_INTERVAL_MS = 30_000;
+
 /** 太短的錄音多半是「嗯」或按到麥克風，送去辨識只是浪費額度。 */
 const MIN_UTTERANCE_BYTES = 8_000;
 
@@ -65,8 +68,13 @@ export interface VoiceSessionDeps {
   wakeWord: string;
   /** 回答完之後這段時間內的追問不需要再叫一次名字。 */
   followUpMs: number;
-  /** 閒置逾時要通知上層把 session 收掉，否則名額不會被釋放。 */
-  onIdle(guildId: string): void;
+  /**
+   * 閒置逾時的通知。session 已經自己 destroy 過了，上層只要把 map 條目拿掉。
+   *
+   * 一定要把 session 本身帶上去：併發的 /voice join 可能留下孤兒 session，
+   * 少了這個參數，孤兒的計時器會把當下真正在用的那一個收掉。
+   */
+  onIdle(guildId: string, session: VoiceSession): void;
 }
 
 /**
@@ -108,11 +116,8 @@ export class VoiceSession {
     this.connection.subscribe(this.player);
     this.startListening();
 
-    // 檢查頻率取閒置時間與 30 秒的較小值：閒置設得很短時也要跟得上
-    this.idleTimer = setInterval(
-      () => this.checkIdle(),
-      Math.max(5_000, Math.min(this.deps.idleMs, 30_000)),
-    );
+    // VOICE_IDLE_MS 的下限是 30 秒，所以檢查頻率固定 30 秒就夠細了
+    this.idleTimer = setInterval(() => this.checkIdle(), IDLE_CHECK_INTERVAL_MS);
   }
 
   static async join(
@@ -154,19 +159,49 @@ export class VoiceSession {
     clearInterval(this.idleTimer);
 
     this.player.stop(true);
-    this.connection.destroy();
+
+    // 被踢出伺服器時 discord.js 會先幫我們關掉連線（GuildDelete → adapter.destroy()），
+    // 這時再關一次 @discordjs/voice 會丟例外。這條路現在有 setInterval 在呼叫，
+    // 沒有人接的話整個行程會掛掉。
+    if (this.connection.state.status !== VoiceConnectionStatus.Destroyed) {
+      try {
+        this.connection.destroy();
+      } catch (error) {
+        logger.warn(`關閉語音連線失敗（多半已經被關過）：${String(error)}`);
+      }
+    }
+
     logger.info(`已離開語音頻道 ${this.channelId}`);
   }
 
-  /** 沒人講話也沒在唸東西就自己出去，把全域的語音名額還回去。 */
+  /**
+   * 沒人講話也沒在唸東西就自己出去，把全域的語音名額還回去。
+   *
+   * 「正在唸東西」一定要算活動：唸台詞或唸回答**不會產生任何 speaking 事件**，
+   * 所以只看 lastActivityAt 的話，一段 79 秒的台詞會在中途被自己砍掉、人還走掉。
+   * 這條路是在 setInterval 上跑的，整段不准把例外丟回去。
+   */
   private checkIdle(): void {
     if (this.destroyed) return;
+
+    if (this.listening.size > 0 || this.player.state.status !== AudioPlayerStatus.Idle) {
+      // 把時間往前推，忙完之後才重新開始倒數
+      this.lastActivityAt = Date.now();
+      return;
+    }
+
     if (Date.now() - this.lastActivityAt < this.deps.idleMs) return;
 
     logger.info(
       `語音頻道 ${this.channelId} 閒置超過 ${Math.round(this.deps.idleMs / 60_000)} 分鐘，自動離開`,
     );
-    this.deps.onIdle(this.guildId);
+
+    try {
+      this.destroy();
+      this.deps.onIdle(this.guildId, this);
+    } catch (error) {
+      logger.warn(`閒置離開時發生錯誤：${String(error)}`);
+    }
   }
 
   /**

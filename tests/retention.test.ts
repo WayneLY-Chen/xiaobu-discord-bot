@@ -4,6 +4,7 @@ import { upsertGuild, upsertUser } from '../src/database/repositories/identity.j
 import {
   appendAssistantMessage,
   appendUserMessage,
+  clearConversation,
   getOrCreateConversation,
   getRecentMessages,
   pruneOldMessages,
@@ -81,5 +82,32 @@ describe('訊息保留期', () => {
     // 同一個頻道再開一次對話，拿到的應該是新的 id
     expect(getOrCreateConversation(db, 'g1', 'c1')).not.toBe(id);
     expect(db.select().from(messages).all()).toHaveLength(0);
+  });
+});
+
+describe('掃描與進行中的回覆同時發生', () => {
+  it('對話串被 /reset + 掃描收掉之後，重新取一次 id 就能繼續寫入', () => {
+    // 這是 chatService 修法依賴的性質：id 不能抱過 await，要重新取。
+    // 沒有這一步的話，答案已經生出來、額度已經花掉，卻會撞 FOREIGN KEY 整段丟掉。
+    const id = getOrCreateConversation(db, 'g1', 'c1');
+    appendUserMessage(db, id, 'u1', 'Wayne', '問題');
+
+    // /reset 清空訊息但留下父列，接著保留期掃描把空的父列收掉
+    clearConversation(db, 'g1', 'c1');
+    pruneOldMessages(db, 30 * DAY_MS);
+
+    const liveId = getOrCreateConversation(db, 'g1', 'c1');
+    expect(liveId).not.toBe(id);
+    expect(() => appendAssistantMessage(db, liveId, '回答')).not.toThrow();
+    expect(getRecentMessages(db, liveId, 10)).toHaveLength(1);
+  });
+
+  it('沿用舊 id 會失敗 —— 這就是原本的 bug', () => {
+    const id = getOrCreateConversation(db, 'g1', 'c1');
+    appendUserMessage(db, id, 'u1', 'Wayne', '問題');
+    clearConversation(db, 'g1', 'c1');
+    pruneOldMessages(db, 30 * DAY_MS);
+
+    expect(() => appendAssistantMessage(db, id, '回答')).toThrow();
   });
 });
