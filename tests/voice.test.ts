@@ -1,4 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { DiscordAPIError, type ChatInputCommandInteraction } from 'discord.js';
+import { resolveVoiceChannel } from '../src/commands/voice.js';
 import { TtsRouter } from '../src/voice/router.js';
 import { normalize } from '../src/voice/stt.js';
 import type { SynthesizedSpeech, TtsProvider } from '../src/voice/types.js';
@@ -79,5 +81,70 @@ describe('TtsRouter', () => {
 
     expect(await router.ready()).toHaveLength(0);
     expect(router.labels).toHaveLength(0);
+  });
+});
+
+describe('resolveVoiceChannel', () => {
+  const voiceChannel = { id: 'C1', name: '說話聊天區！！', isVoiceBased: () => true };
+
+  function fakeInteraction(options: {
+    cached?: unknown;
+    stateFetch?: () => Promise<unknown>;
+    channelFetch?: () => Promise<unknown>;
+  }) {
+    const stateFetch = vi.fn(options.stateFetch ?? (async () => ({ channelId: null, channel: null })));
+    const channelFetch = vi.fn(options.channelFetch ?? (async () => null));
+
+    const interaction = {
+      member: { voice: { channel: options.cached ?? null } },
+      user: { id: 'U1' },
+      guild: { voiceStates: { fetch: stateFetch }, channels: { fetch: channelFetch } },
+    } as unknown as ChatInputCommandInteraction<'cached'>;
+
+    return { interaction, stateFetch, channelFetch };
+  }
+
+  it('快取有的時候直接用，不多打一次 API', async () => {
+    const { interaction, stateFetch } = fakeInteraction({ cached: voiceChannel });
+
+    expect(await resolveVoiceChannel(interaction)).toBe(voiceChannel);
+    expect(stateFetch).not.toHaveBeenCalled();
+  });
+
+  it('快取落空就去問 Discord —— 這是漏掉 intent 時唯一救得回來的路', async () => {
+    const { interaction } = fakeInteraction({
+      stateFetch: async () => ({ channelId: 'C1', channel: voiceChannel }),
+    });
+
+    expect(await resolveVoiceChannel(interaction)).toBe(voiceChannel);
+  });
+
+  it('Discord 回 404 代表真的不在語音頻道', async () => {
+    const { interaction } = fakeInteraction({
+      stateFetch: async () => {
+        throw new DiscordAPIError({ message: 'Unknown Voice State', code: 10065 }, 10065, 404, 'GET', '', {});
+      },
+    });
+
+    expect(await resolveVoiceChannel(interaction)).toBeNull();
+  });
+
+  it('語音狀態有頻道但頻道不在快取，就把頻道也抓回來', async () => {
+    const { interaction, channelFetch } = fakeInteraction({
+      stateFetch: async () => ({ channelId: 'C1', channel: null }),
+      channelFetch: async () => voiceChannel,
+    });
+
+    expect(await resolveVoiceChannel(interaction)).toBe(voiceChannel);
+    expect(channelFetch).toHaveBeenCalledWith('C1');
+  });
+
+  it('抓回來的不是語音頻道就不算數', async () => {
+    const { interaction } = fakeInteraction({
+      stateFetch: async () => ({ channelId: 'C1', channel: null }),
+      channelFetch: async () => ({ id: 'C1', isVoiceBased: () => false }),
+    });
+
+    expect(await resolveVoiceChannel(interaction)).toBeNull();
   });
 });
