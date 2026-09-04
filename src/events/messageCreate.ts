@@ -11,6 +11,7 @@ import type { ChatReply } from '../ai/chatService.js';
 import type { BotContext } from '../bot/context.js';
 import { resolveSettings } from '../config/resolveSettings.js';
 import { ensureGuildSettings, getUserSettings } from '../database/repositories/settings.js';
+import { listGuildTriggers, matchTrigger } from '../database/repositories/guildTriggers.js';
 import { upsertGuild, upsertUser } from '../database/repositories/identity.js';
 import { chunkMessage } from '../utils/messageChunk.js';
 import { toUserMessage, UserFacingError } from '../utils/errors.js';
@@ -18,6 +19,22 @@ import { logger } from '../utils/logger.js';
 
 /** Discord 的 typing 指示大約 10 秒後消失，所以要定期重送。 */
 const TYPING_REFRESH_MS = 8_000;
+
+/** 同一個伺服器兩次觸發台詞之間至少要隔這麼久。指令的說明文字也用這個數字。 */
+export const TRIGGER_COOLDOWN_SECONDS = 60;
+const TRIGGER_COOLDOWN_MS = TRIGGER_COOLDOWN_SECONDS * 1000;
+
+/** guildId → 上次唸台詞的時間。 */
+const lastTriggeredAt = new Map<string, number>();
+
+/**
+ * 正在唸台詞的伺服器。
+ *
+ * 刻意**不排隊**：VoiceSession.speak() 的佇列沒有上限，排隊等於讓任何人
+ * 用十則純文字訊息預約十幾分鐘的語音，而且中途沒辦法取消。正在唸的時候
+ * 直接丟掉新的觸發，比排起來誠實。
+ */
+const speakingTrigger = new Set<string>();
 
 export function registerMessageCreate(client: Client, context: BotContext): void {
   client.on(Events.MessageCreate, (message) => {
@@ -37,6 +54,10 @@ async function handleMessage(message: Message, context: BotContext): Promise<voi
 
   const settings = loadSettings(message, context);
   if (!settings.chatEnabled) return;
+
+  // 觸發台詞走自己的路：不需要 @ 小步、不需要在 AI 頻道、也不產生任何文字訊息。
+  // 放在這裡是因為 loadSettings 每則訊息本來就會跑，多這一段不增加成本。
+  maybeSpeakTrigger(message, context);
 
   const mentioned = message.mentions.users.has(botUser.id);
   const inAiChannel = settings.aiChannelId === message.channelId;
@@ -89,6 +110,36 @@ async function handleMessage(message: Message, context: BotContext): Promise<voi
   } finally {
     stopTyping();
   }
+}
+
+/**
+ * 訊息命中觸發詞就在語音頻道唸出對應的台詞。
+ *
+ * 三道閘，缺一不可：
+ * 1. 小步得正在這個伺服器的語音頻道裡（順便讓 99.9% 的訊息在查資料庫前就返回）
+ * 2. **講話的人也得在同一個語音頻道裡** —— 少了這關，任何能在任一文字頻道
+ *    打字的人都能把上百秒的音訊灌進一個他自己根本進不去的語音頻道
+ * 3. 冷卻時間與「同時只准一段在飛」，避免有人用純文字訊息洗語音
+ *
+ * 刻意不 await：speak() 回傳的是整段播放完成的 Promise，await 它會把
+ * 後面的 AI 文字回覆卡住整整一兩分鐘。
+ */
+function maybeSpeakTrigger(message: Message<true>, context: BotContext): void {
+  const session = context.voice?.sessionFor(message.guildId);
+  if (!session) return;
+
+  if (message.member?.voice.channelId !== session.channelId) return;
+  if (speakingTrigger.has(message.guildId)) return;
+  if (Date.now() - (lastTriggeredAt.get(message.guildId) ?? 0) < TRIGGER_COOLDOWN_MS) return;
+
+  const hit = matchTrigger(listGuildTriggers(context.db, message.guildId), message.content);
+  if (!hit) return;
+
+  lastTriggeredAt.set(message.guildId, Date.now());
+  speakingTrigger.add(message.guildId);
+  logger.info(`觸發台詞 #${hit.id}「${hit.phraseRaw}」（${message.guild.name}）`);
+
+  void session.speak(hit.response).finally(() => speakingTrigger.delete(message.guildId));
 }
 
 /** 讀取這個 guild + user 實際生效的設定，順便把身分寫進本地資料庫。 */

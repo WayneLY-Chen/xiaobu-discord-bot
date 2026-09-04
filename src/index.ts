@@ -133,6 +133,7 @@ async function main(): Promise<void> {
         tts,
         stt: new GroqWhisperStt(env.GROQ_API_KEY),
         ttsTimeoutMs: env.TTS_TIMEOUT_MS,
+        maxPlaybackMs: env.VOICE_MAX_PLAYBACK_MS,
         sttTimeoutMs: env.STT_TIMEOUT_MS,
         silenceMs: env.VOICE_SILENCE_MS,
         maxUtteranceMs: env.VOICE_MAX_UTTERANCE_MS,

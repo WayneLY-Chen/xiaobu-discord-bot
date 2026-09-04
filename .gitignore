@@ -25,3 +25,6 @@ Thumbs.db
 # 這是這個 Bot 專屬的形象素材，版權保留，不隨公開 repo 散布。
 # 自架的人請自行準備圖片（詳見 README「圖片素材」）。
 assets/
+
+# Claude Code 的本機權限設定：裡面有正式機的位址，不進公開 repo
+.claude/settings.local.json

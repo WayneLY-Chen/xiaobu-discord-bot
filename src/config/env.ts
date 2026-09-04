@@ -92,6 +92,12 @@ const envSchema = z.object({
   /** 靜音多久算一句話講完。太短會把句中的停頓切斷。 */
   VOICE_SILENCE_MS: envInt(1000, 200),
   /** 同時可以有幾個伺服器在使用語音。Piper 一次只跑得動一路，所以預設 1。 */
+  /**
+   * 一段語音最長播多久。與 TTS_TIMEOUT_MS 分開 —— 那個管合成，這個管播放。
+   * 450 字的中文大約是 90～100 秒，所以預設留 3 分鐘。
+   */
+  VOICE_MAX_PLAYBACK_MS: envInt(180_000, 10_000),
+
   VOICE_MAX_SESSIONS: envInt(1, 1),
 
   /**

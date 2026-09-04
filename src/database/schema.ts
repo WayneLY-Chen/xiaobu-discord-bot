@@ -156,6 +156,36 @@ export const guildFacts = sqliteTable(
 );
 
 // ---------------------------------------------------------------------------
+// 觸發台詞：聊天出現關鍵字，小步就在語音頻道唸一段固定的話
+// ---------------------------------------------------------------------------
+
+/**
+ * 每個伺服器自己設定的觸發詞與台詞。
+ *
+ * 刻意做成資料表而不是寫死在程式碼裡 —— 小步是公開可邀請的多伺服器 Bot，
+ * 寫死的梗會出現在所有伺服器裡，那是別人不會想要的。
+ */
+export const guildTriggers = sqliteTable(
+  'guild_triggers',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    guildId: text('guild_id')
+      .notNull()
+      .references(() => guilds.id, { onDelete: 'cascade' }),
+    /** 比對用的關鍵字，已正規化（轉繁體、轉小寫、去空白）。 */
+    phrase: text('phrase').notNull(),
+    /** 使用者輸入的原始關鍵字，列表顯示用。 */
+    phraseRaw: text('phrase_raw').notNull(),
+    /** 命中時要唸出來的台詞。 */
+    response: text('response').notNull(),
+    /** 新增這條的管理員，出事時查得到是誰加的。 */
+    createdBy: text('created_by').notNull(),
+    createdAt: timestamp('created_at'),
+  },
+  (table) => [index('guild_triggers_guild_idx').on(table.guildId, table.id)],
+);
+
+// ---------------------------------------------------------------------------
 // 音樂佇列：Phase 5 使用，Phase 1 只建表
 // ---------------------------------------------------------------------------
 
@@ -205,3 +235,4 @@ export type UserSettingsRow = typeof userSettings.$inferSelect;
 export type MessageRow = typeof messages.$inferSelect;
 export type MemoryRow = typeof memories.$inferSelect;
 export type GuildFactRow = typeof guildFacts.$inferSelect;
+export type GuildTriggerRow = typeof guildTriggers.$inferSelect;

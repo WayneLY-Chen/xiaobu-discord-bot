@@ -8,6 +8,7 @@ import {
   SlashCommandBuilder,
 } from 'discord.js';
 import type { BotContext, Command } from '../bot/context.js';
+import { TRIGGER_COOLDOWN_SECONDS } from '../events/messageCreate.js';
 import { MAX_SYSTEM_PROMPT_LENGTH } from '../config/constants.js';
 import {
   addGuildFact,
@@ -16,6 +17,14 @@ import {
   MAX_FACT_LENGTH,
   removeGuildFact,
 } from '../database/repositories/guildFacts.js';
+import {
+  addGuildTrigger,
+  listGuildTriggers,
+  MAX_TRIGGERS_PER_GUILD,
+  MAX_TRIGGER_PHRASE_LENGTH,
+  MAX_TRIGGER_RESPONSE_LENGTH,
+  removeGuildTrigger,
+} from '../database/repositories/guildTriggers.js';
 import { resolveSettings } from '../config/resolveSettings.js';
 import {
   ensureGuildSettings,
@@ -140,6 +149,44 @@ export const settingsCommand: Command = {
             ),
         ),
     )
+    .addSubcommandGroup((group) =>
+      group
+        .setName('trigger')
+        .setDescription('聊天出現關鍵字時，小步在語音頻道唸一段固定的台詞')
+        .addSubcommand((sub) =>
+          sub
+            .setName('add')
+            .setDescription('新增一組觸發詞與台詞')
+            .addStringOption((option) =>
+              option
+                .setName('phrase')
+                .setDescription('關鍵字，至少兩個字。訊息裡出現就會觸發（不分簡繁與大小寫）')
+                .setRequired(true)
+                .setMinLength(2)
+                .setMaxLength(MAX_TRIGGER_PHRASE_LENGTH),
+            )
+            .addStringOption((option) =>
+              option
+                .setName('response')
+                .setDescription('要唸出來的台詞')
+                .setRequired(true)
+                .setMaxLength(MAX_TRIGGER_RESPONSE_LENGTH),
+            ),
+        )
+        .addSubcommand((sub) => sub.setName('list').setDescription('列出所有觸發詞'))
+        .addSubcommand((sub) =>
+          sub
+            .setName('remove')
+            .setDescription('刪除一組觸發詞')
+            .addIntegerOption((option) =>
+              option
+                .setName('id')
+                .setDescription('編號（用 /settings trigger list 查看）')
+                .setRequired(true)
+                .setMinValue(1),
+            ),
+        ),
+    )
     .addSubcommand((sub) => sub.setName('reset').setDescription('還原所有伺服器設定')),
 
   async execute(interaction, context) {
@@ -157,6 +204,11 @@ export const settingsCommand: Command = {
 
     if (interaction.options.getSubcommandGroup() === 'facts') {
       await handleFacts(interaction, context, guildId);
+      return;
+    }
+
+    if (interaction.options.getSubcommandGroup() === 'trigger') {
+      await handleTriggers(interaction, context, guildId);
       return;
     }
 
@@ -262,6 +314,83 @@ export const settingsCommand: Command = {
  * facts 的範圍是 (guild_id)，整個伺服器共用，因此只有 Manage Guild 能改。
  * 內容會直接進 system prompt，由設定的管理員自行負責。
  */
+/**
+ * 觸發台詞。與 facts 同一套權限模型（Manage Guild），但影響的是語音。
+ *
+ * 這條路徑會用小步的聲音把管理員輸入的文字**原音播出**，完全不經過模型 ——
+ * prompt.ts 裡那些「不要講真實人物壞話」的守則在這裡一條都不生效。
+ * 所以權限守在 Manage Guild，內容由設定的管理員自行負責。
+ */
+async function handleTriggers(
+  interaction: ChatInputCommandInteraction,
+  context: BotContext,
+  guildId: string,
+): Promise<void> {
+  const { db } = context;
+
+  switch (interaction.options.getSubcommand()) {
+    case 'add': {
+      const phrase = interaction.options.getString('phrase', true);
+      const response = interaction.options.getString('response', true);
+      const outcome = addGuildTrigger(db, guildId, phrase, response, interaction.user.id);
+
+      const message =
+        outcome.status === 'added'
+          ? `已新增觸發詞「${phrase}」（目前 ${outcome.total}/${MAX_TRIGGERS_PER_GUILD} 組）。\n` +
+            '小步**在語音頻道裡**的時候，只要跟她在同一個頻道的人講到這個詞就會唸出來。\n' +
+            `同一個伺服器每 ${TRIGGER_COOLDOWN_SECONDS} 秒最多唸一次。`
+          : outcome.status === 'duplicate'
+            ? '這個觸發詞已經有了。'
+            : outcome.status === 'phrase-too-short'
+              ? '觸發詞至少要兩個字，而且不能只有標點或空白 —— 否則每一則訊息都會命中。'
+              : `觸發詞已達上限（${MAX_TRIGGERS_PER_GUILD} 組），請先刪掉幾個。`;
+
+      await reply(interaction, message);
+      return;
+    }
+
+    case 'list': {
+      const rows = listGuildTriggers(db, guildId);
+
+      if (rows.length === 0) {
+        await reply(interaction, '目前沒有設定任何觸發詞。');
+        return;
+      }
+
+      // embed 的 description 上限是 4096 字元，而單一台詞就可能有 600 字。
+      // 這裡只顯示開頭，管理員要的是「有哪些、編號幾號」而不是全文。
+      const lines = rows.map(
+        (row) => `**#${row.id}**　\`${row.phraseRaw}\` → ${preview(row.response)}`,
+      );
+
+      const embed = new EmbedBuilder()
+        .setTitle(`觸發台詞（${rows.length}/${MAX_TRIGGERS_PER_GUILD}）`)
+        .setColor(0x5865f2)
+        .setDescription(lines.join('\n'))
+        .setFooter({ text: '用 /settings trigger remove id:<編號> 刪除' });
+
+      await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+      return;
+    }
+
+    case 'remove': {
+      const id = interaction.options.getInteger('id', true);
+      const removed = removeGuildTrigger(db, guildId, id);
+      await reply(interaction, removed ? `已刪除 #${id}。` : `找不到 #${id}。`);
+      return;
+    }
+
+    default:
+      await reply(interaction, '未知的子指令。');
+  }
+}
+
+/** 台詞在列表裡只顯示開頭，避免十條就把 embed 的 4096 字元撐爆。 */
+function preview(text: string): string {
+  const oneLine = text.replace(/\s+/g, ' ').trim();
+  return oneLine.length <= 60 ? oneLine : `${oneLine.slice(0, 60)}…`;
+}
+
 async function handleFacts(
   interaction: ChatInputCommandInteraction,
   context: BotContext,

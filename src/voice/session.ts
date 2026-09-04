@@ -36,6 +36,14 @@ export interface VoiceSessionDeps {
    */
   respond(where: { guildId: string; channelId: string; userId: string }, text: string): Promise<string>;
   ttsTimeoutMs: number;
+  /**
+   * 等一段語音播完的上限。
+   *
+   * 刻意與 ttsTimeoutMs 分開：那個管的是「合成要多久才吐第一個位元組」，
+   * 這個管的是「這段音檔本身有多長」。用同一個數字的話，一段 450 字、
+   * 將近 100 秒的台詞會在 60 秒處被當成逾時砍掉三分之一。
+   */
+  maxPlaybackMs: number;
   sttTimeoutMs: number;
   silenceMs: number;
   maxUtteranceMs: number;
@@ -66,8 +74,10 @@ export class VoiceSession {
     private readonly deps: VoiceSessionDeps,
   ) {
     this.player = createAudioPlayer({
-      // 沒人在聽的時候暫停，不要空轉燒 CPU
-      behaviors: { noSubscriber: NoSubscriberBehavior.Pause },
+      // 沒有訂閱者時照播不誤。設成 Pause 的話，語音頻道裡沒有人的時候播放會停住、
+      // 永遠等不到 Idle，每一段都得吃滿逾時才結束，佇列後面的東西全部被卡住。
+      // 當初選 Pause 是為了省 Piper 的 CPU，現在合成在雲端，空轉只剩 ffmpeg。
+      behaviors: { noSubscriber: NoSubscriberBehavior.Play },
     });
 
     this.player.on('error', (error) => logger.error('語音播放失敗', error));
@@ -165,7 +175,7 @@ export class VoiceSession {
 
     try {
       await entersState(this.player, AudioPlayerStatus.Playing, 15_000);
-      await entersState(this.player, AudioPlayerStatus.Idle, this.deps.ttsTimeoutMs);
+      await entersState(this.player, AudioPlayerStatus.Idle, this.deps.maxPlaybackMs);
     } catch (error) {
       logger.warn(`語音播放未正常結束：${ffmpegError.trim() || String(error)}`);
     } finally {
