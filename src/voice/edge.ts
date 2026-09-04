@@ -1,29 +1,10 @@
 import { MsEdgeTTS, OUTPUT_FORMAT } from 'msedge-tts';
 import { UserFacingError } from '../utils/errors.js';
+import { escapeForSsml } from './ssml.js';
 import { MAX_SPEECH_LENGTH, type SpeechRequest, type SynthesizedSpeech, type TtsProvider } from './types.js';
 
 /** msedge-tts 的取樣率由輸出格式決定，AUDIO_24KHZ_* 就是 24000。 */
 const EDGE_SAMPLE_RATE = 24_000;
-
-const XML_ESCAPES = new Map([
-  ['&', '&amp;'],
-  ['<', '&lt;'],
-  ['>', '&gt;'],
-  ['"', '&quot;'],
-  ["'", '&apos;'],
-]);
-
-/**
- * msedge-tts 會把文字**原樣**內插進 SSML 樣板（見其 _SSMLTemplate），
- * 完全不做跳脫。這裡的文字來自語言模型，而且是公開 Bot ——
- * 有人有辦法誘導模型吐出 `</prosody><voice name="...">` 之類的東西，
- * 就能換掉聲線甚至改寫整段 SSML。所以送出前一定要跳脫。
- */
-export function escapeForSsml(text: string): string {
-  return Array.from(text)
-    .map((char) => XML_ESCAPES.get(char) ?? char)
-    .join('');
-}
 
 export interface EdgeTtsOptions {
   /** 聲線的 ShortName，例如 zh-CN-XiaoyiNeural（曉伊）。 */

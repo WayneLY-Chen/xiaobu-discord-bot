@@ -28,3 +28,6 @@ assets/
 
 # Claude Code 的本機權限設定：裡面有正式機的位址，不進公開 repo
 .claude/settings.local.json
+
+# 審查代理會在這裡留下權限清單與暫存檔，不進版控
+.claude/

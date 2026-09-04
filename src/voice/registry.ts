@@ -1,5 +1,6 @@
 import type { Env } from '../config/env.js';
 import { logger } from '../utils/logger.js';
+import { AzureTtsProvider } from './azure.js';
 import { EdgeTtsProvider } from './edge.js';
 import { PiperTtsProvider } from './piper.js';
 import { TtsRouter } from './router.js';
@@ -9,9 +10,19 @@ import type { TtsProvider } from './types.js';
 const PIPER_SAMPLE_RATE = 22_050;
 
 export async function createTtsRouter(env: Env): Promise<TtsRouter> {
-  // Edge 排在前面：Piper 在正式機上比即時還慢（見 piper.ts 的實測數字），
-  // 只留著當 Edge 掛掉時的後備。
+  // 順序＝優先序。Azure 有完整語音庫但要自己申請金鑰；Edge 不用帳號、
+  // 音質一樣是神經語音；Piper 在正式機上比即時還慢，只當最後的保險。
+  // 任何一家掛掉 TtsRouter 都會往下換手，語音不會整個啞掉。
+  const azure = new AzureTtsProvider({
+    apiKey: env.AZURE_SPEECH_KEY ?? '',
+    region: env.AZURE_SPEECH_REGION,
+    voice: env.AZURE_TTS_VOICE,
+    pitch: env.EDGE_TTS_PITCH,
+    rate: env.EDGE_TTS_RATE,
+  });
+
   const providers: TtsProvider[] = [
+    azure,
     new EdgeTtsProvider({
       voice: env.EDGE_TTS_VOICE,
       pitch: env.EDGE_TTS_PITCH,
@@ -34,6 +45,10 @@ export async function createTtsRouter(env: Env): Promise<TtsRouter> {
   } else {
     logger.info(`已啟用的語音合成：${ready.map((p) => p.label).join('、')}`);
   }
+
+  // 金鑰打錯的話，症狀只是「聲音還是曉伊」—— 看不出是 Azure 沒接上。
+  // 啟動時實際打一次，把問題變成看得懂的記錄。
+  await azure.verify();
 
   return router;
 }

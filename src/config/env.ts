@@ -84,6 +84,17 @@ const envSchema = z.object({
    * 常用的中文女聲：zh-CN-XiaoyiNeural（曉伊）、zh-CN-XiaoxiaoNeural（曉曉）、
    * zh-TW-HsiaoChenNeural（曉臻，台灣腔）、zh-TW-HsiaoYuNeural（曉雨，台灣腔）。
    */
+  /**
+   * Azure Speech（選用）。設了金鑰才會啟用，而且會排在 Edge 前面。
+   *
+   * 存在的理由是 Edge 的免費端點拿不到完整語音庫 —— 曉双這類兒童聲線只有
+   * Azure 有。**務必用 F0 免費層**：每月 50 萬字元，用完直接回 429，不會
+   * 溢出到付費。換成 S0 資源就是會計費的，程式擋不住。
+   */
+  AZURE_SPEECH_KEY: optionalSecret,
+  AZURE_SPEECH_REGION: z.string().default(''),
+  AZURE_TTS_VOICE: z.string().min(1).default('zh-CN-XiaoshuangNeural'),
+
   EDGE_TTS_VOICE: z.string().min(1).default('zh-CN-XiaoyiNeural'),
 
   /**

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { DiscordAPIError, type ChatInputCommandInteraction } from 'discord.js';
 import { resolveVoiceChannel } from '../src/commands/voice.js';
-import { escapeForSsml } from '../src/voice/edge.js';
+import { escapeForSsml } from '../src/voice/ssml.js';
 import { TtsRouter } from '../src/voice/router.js';
 import { normalize } from '../src/voice/stt.js';
 import type { SynthesizedSpeech, TtsProvider } from '../src/voice/types.js';
