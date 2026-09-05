@@ -9,6 +9,7 @@ import {
   type VoiceBasedChannel,
 } from 'discord.js';
 import type { BotContext, Command } from '../bot/context.js';
+import { ensureGuildSettings } from '../database/repositories/settings.js';
 import { toUserMessage } from '../utils/errors.js';
 import { logger } from '../utils/logger.js';
 
@@ -52,6 +53,14 @@ export const voiceCommand: Command = {
     if (interaction.options.getSubcommand() === 'leave') {
       const left = voice.leave(interaction.guildId);
       await interaction.editReply(left ? '我離開語音頻道了。' : '我目前不在任何語音頻道。');
+      return;
+    }
+
+    // leave 不看這個開關 —— 已經被關掉的伺服器還是要能把我叫出去。
+    if (!ensureGuildSettings(context.db, interaction.guildId).voiceEnabled) {
+      await interaction.editReply(
+        '這個伺服器的管理員把語音功能關掉了。要用的話請他們執行 `/settings voice enabled:True`。',
+      );
       return;
     }
 

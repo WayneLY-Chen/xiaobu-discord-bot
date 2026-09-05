@@ -72,6 +72,9 @@
 | 多伺服器隔離 | 每個 Server 獨立設定，資料互不流通 |
 | 個人設定 | 偏好模型、語言、回覆風格 |
 | 伺服器設定 | AI 頻道、預設模型、開關、自訂系統指示 |
+| 生圖 | Pollinations 與 Cloudflare Workers AI，**預設關閉**，`/settings image` 開啟 |
+| 語音對話 | `/voice join` 之後直接說話，**預設開啟**，`/settings voice` 可關閉 |
+| 觸發台詞 | `/settings trigger`，聊天出現關鍵字時在語音頻道唸指定的話 |
 | Rate limiting | 使用者 / 伺服器 / 全域三層 |
 | 用量統計 | `/usage`，僅限有 Manage Guild 權限者 |
 | SQLite 持久化 | Docker volume，重啟與 VM 重開機都不掉資料 |
@@ -90,13 +93,15 @@
 
 `/voice join` 讓小步進到你所在的語音頻道，之後**直接說話就好**，不用再打任何指令。講完停一秒她就會回答。`/voice leave` 讓她出去。
 
+伺服器管理員可以用 `/settings voice enabled:False` 整個關掉；關的當下如果小步正在某個語音頻道裡，她會直接離開。
+
 流程（規格 §15）：`Discord Voice → STT → AI → TTS → Discord Voice`
 
 | 環節 | 用什麼 | 額度 |
 |---|---|---|
 | **聽**（STT） | Groq `whisper-large-v3-turbo` | 2,000 次／天 |
 | **想** | 與文字聊天**完全相同**的 ChatService | 共用 |
-| **說**（TTS） | Microsoft Edge 大聲朗讀（`zh-CN-XiaoyiNeural` 曉伊） | **無限，不需要帳號** |
+| **說**（TTS） | Microsoft Edge 大聲朗讀（`zh-CN-XiaoxiaoNeural` 曉曉） | **無限，不需要帳號** |
 
 語音的 AI 回覆走的是與文字一模一樣的流程 —— 記憶、工具、伺服器設定、用量統計全部共用，不另外開一套。對話串用**語音頻道的 ID**，所以語音的上下文與文字頻道是分開的。
 

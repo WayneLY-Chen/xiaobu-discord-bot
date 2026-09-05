@@ -53,10 +53,12 @@ export const guildSettings = sqliteTable('guild_settings', {
   locale: text('locale'),
   chatEnabled: bool('chat_enabled', true),
   memoryEnabled: bool('memory_enabled', true),
-  // 以下為後續 Phase 的開關，先建欄位但 Phase 1 尚未實作對應功能
+  // 生圖預設關閉：它比聊天貴，也比較容易被拿來亂玩，讓管理員自己決定要不要開。
   imageEnabled: bool('image_enabled', false),
+  /** Phase 5（YouTube 音樂）已取消，這個欄位沒有任何程式讀取，保留只是為了不動舊資料。 */
   musicEnabled: bool('music_enabled', false),
-  voiceEnabled: bool('voice_enabled', false),
+  // 語音預設開啟：要用它得先有人跑 /voice join，不會自己冒出來。
+  voiceEnabled: bool('voice_enabled', true),
   updatedAt: timestamp('updated_at'),
 });
 

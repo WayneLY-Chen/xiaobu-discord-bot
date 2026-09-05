@@ -115,6 +115,14 @@ export const settingsCommand: Command = {
           option.setName('enabled').setDescription('是否啟用').setRequired(true),
         ),
     )
+    .addSubcommand((sub) =>
+      sub
+        .setName('voice')
+        .setDescription('開啟或關閉語音功能（預設開啟）')
+        .addBooleanOption((option) =>
+          option.setName('enabled').setDescription('是否啟用').setRequired(true),
+        ),
+    )
     .addSubcommandGroup((group) =>
       group
         .setName('prompt')
@@ -297,6 +305,25 @@ export const settingsCommand: Command = {
           enabled
             ? '生圖功能已開啟。跟小步說「畫一張…」就會生圖。'
             : '生圖功能已關閉。',
+        );
+        return;
+      }
+
+      case 'voice': {
+        const enabled = interaction.options.getBoolean('enabled', true);
+        updateGuildSettings(db, guildId, { voiceEnabled: enabled });
+
+        // 關掉時要順手把人請出去，否則已經在頻道裡的那一場會繼續跑，
+        // 「已關閉」就變成一句空話。
+        const left = enabled ? false : (context.voice?.leave(guildId) ?? false);
+
+        await reply(
+          interaction,
+          enabled
+            ? '語音功能已開啟。用 `/voice join` 讓小步進到你所在的語音頻道。'
+            : left
+              ? '語音功能已關閉，我也離開語音頻道了。'
+              : '語音功能已關閉。',
         );
         return;
       }
@@ -593,13 +620,14 @@ function buildSettingsEmbed(
       { name: 'AI 聊天', value: onOff(guildRow.chatEnabled), inline: true },
       { name: '記憶功能', value: onOff(guildRow.memoryEnabled), inline: true },
       { name: '生圖功能', value: onOff(guildRow.imageEnabled), inline: true },
+      { name: '語音功能', value: onOff(guildRow.voiceEnabled), inline: true },
       { name: '系統指示', value: systemPrompt },
       {
         name: '對你目前生效的設定',
         value: `模型 ${effective.model}　語言 ${effective.locale}`,
       },
     )
-    .setFooter({ text: '生圖、音樂、語音尚未實作，開關暫時無效。' });
+    .setFooter({ text: '個人設定可以再關掉自己的記憶，但不能打開伺服器關掉的功能。' });
 }
 
 async function reply(

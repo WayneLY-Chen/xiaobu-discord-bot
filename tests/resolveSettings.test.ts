@@ -15,7 +15,7 @@ function guild(partial: Partial<GuildSettingsRow> = {}): GuildSettingsRow {
     memoryEnabled: true,
     imageEnabled: false,
     musicEnabled: false,
-    voiceEnabled: false,
+    voiceEnabled: true,
     updatedAt: 0,
     ...partial,
   };
@@ -54,6 +54,16 @@ describe('resolveSettings', () => {
     );
 
     expect(result.model).toBe('gemini-3.7-flash');
+  });
+
+  it('語音預設開啟 —— 沒有 guild 設定列時也一樣', () => {
+    expect(resolveSettings(undefined, undefined, defaults).voiceEnabled).toBe(true);
+  });
+
+  it('管理員關掉語音就是關掉，個人不能覆寫', () => {
+    // voiceEnabled 只看伺服器；user 那一列根本沒有這個欄位可以覆寫。
+    const result = resolveSettings(guild({ voiceEnabled: false }), user(), defaults);
+    expect(result.voiceEnabled).toBe(false);
   });
 
   it('資料庫存著已下架的 model 時退回預設，而不是讓 API 呼叫失敗', () => {

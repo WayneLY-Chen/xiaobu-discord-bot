@@ -15,6 +15,8 @@ export const helpCommand: Command = {
   async execute(interaction, context) {
     const searchEnabled = context.chat.searchEnabled;
     const imageEnabled = context.chat.imageEnabled;
+    // 沒有可用的 TTS 時 context.voice 是 undefined，這時不該把語音列進說明。
+    const voiceEnabled = context.voice !== undefined;
 
     const embed = new EmbedBuilder()
       .setTitle('使用說明')
@@ -78,16 +80,27 @@ export const helpCommand: Command = {
             '`/settings ai-channel` — 指定 AI 頻道',
             '`/settings model` — 預設模型',
             '`/settings chat` — 開啟／關閉聊天',
-            '`/settings prompt` — 自訂系統指示',
+            '`/settings image` — 開啟／關閉生圖',
+            '`/settings voice` — 開啟／關閉語音',
+            '`/settings prompt edit|full|clear` — 自訂系統指示',
             '`/settings facts add|list|remove` — 伺服器共用的背景知識',
+            '`/settings trigger add|list|remove` — 聊天出現關鍵字時，我在語音頻道唸指定的話',
             '`/settings reset` — 還原伺服器設定',
             '`/usage` — 查看本伺服器用量',
           ].join('\n'),
         },
-        {
-          name: '尚未開放',
-          value: '生圖、音樂、語音仍在開發中，目前不可使用。',
-        },
+        ...(voiceEnabled
+          ? [
+              {
+                name: '語音對話',
+                value: [
+                  '`/voice join` — 我進到你所在的語音頻道，之後**直接說話就好**，不用再打指令',
+                  '`/voice leave` — 我出去',
+                  '講完停一下我就會回答。閒置一陣子沒人說話我會自己離開。',
+                ].join('\n'),
+              },
+            ]
+          : []),
       )
       .setFooter({ text: '個人設定優先於伺服器設定；伺服器關閉的功能無法被個人覆寫。' });
 
