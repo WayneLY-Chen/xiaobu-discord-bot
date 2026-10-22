@@ -1,6 +1,6 @@
 # 小步（Xiaobu）— Discord AI Bot
 
-![Node](https://img.shields.io/badge/node-%E2%89%A522-339933?logo=node.js&logoColor=white)
+![Node](https://img.shields.io/badge/node-%E2%89%A524.22.1-339933?logo=node.js&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)
 ![discord.js](https://img.shields.io/badge/discord.js-14-5865F2?logo=discord&logoColor=white)
 ![Gemini](https://img.shields.io/badge/Gemini-free%20tier-4285F4?logo=googlegemini&logoColor=white)
@@ -282,7 +282,7 @@ AI 頻道是多人共用的。如果只把頻道歷史丟給模型，模型會�
 
 ## 系統需求
 
-- Node.js 22 以上（本機開發）
+- Node.js 24.22.1 以上（本機開發）
 - Docker 與 Docker Compose（部署）
 - Discord Bot Token
 - Gemini 或 Groq 的 API Key（至少一把，兩把都有就有自動換手）

@@ -1,6 +1,12 @@
 # 使用 bookworm-slim（glibc）而不是 alpine（musl）：
 # better-sqlite3 對 glibc 有官方 prebuild，不用從頭編譯。
-FROM node:22-bookworm-slim AS builder
+#
+# 鎖定完整版本而不是浮動 tag：浮動 tag 的實際版本取決於上次拉取的時間，
+# 可能停在有漏洞的舊版。24.22.1 含 2026-10 安全修補（CVE-2026-111497 等），
+# 與開發機的 Node 版本一致。升版時改這一行即可，三個階段共用。
+ARG NODE_IMAGE=node:24.22.1-bookworm-slim
+
+FROM ${NODE_IMAGE} AS builder
 
 WORKDIR /app
 
@@ -29,7 +35,7 @@ RUN npm prune --omit=dev
 #
 # 注意：抓的是 **x86_64** 的執行檔。正式機是 Oracle 的 x86_64 VM；
 # 要部署到 arm64（Ampere A1）的話這一行要改成對應的 aarch64 版本。
-FROM node:22-bookworm-slim AS piper
+FROM ${NODE_IMAGE} AS piper
 
 ARG PIPER_VERSION=2023.11.14-2
 ARG PIPER_VOICE=zh_CN-huayan-medium
@@ -47,7 +53,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 
-FROM node:22-bookworm-slim AS runtime
+FROM ${NODE_IMAGE} AS runtime
 
 ENV NODE_ENV=production
 WORKDIR /app

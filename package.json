@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=22"
+    "node": ">=24.22.1"
   },
   "scripts": {
     "dev": "tsx watch src/index.ts",
@@ -40,5 +40,11 @@
   },
   "optionalDependencies": {
     "@discordjs/opus": "^0.10.0"
+  },
+  "overrides": {
+    "esbuild": "0.28.2",
+    "@discordjs/node-pre-gyp": {
+      "tar": "^7.5.22"
+    }
   }
 }
